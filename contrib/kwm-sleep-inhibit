@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# A script widget of the kwm bar: " ☕ " when a lock blocks sleep. The tooltip
+# is the list of locks. A "delay" lock does not block sleep, and
+# NetworkManager and UPower always have one.
+#
+# Needs: systemd-inhibit (systemd 256 or later, for --json), jq.
+# Configuration: .{ .script = .{ .exec = "kwm-sleep-inhibit", .interval = 5000, .return_type = .json } }
+set -euo pipefail
+
+if systemd-inhibit --list --no-pager --json=short \
+  | jq -e 'any(.[]; .mode == "block" and any(.what | split(":")[]; . == "sleep"))' >/dev/null; then
+  systemd-inhibit --list --no-pager | jq -Rsc '{text: " ☕ ", tooltip: rtrimstr("\n")}'
+else
+  echo '{"text": ""}'
+fi

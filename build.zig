@@ -289,6 +289,12 @@ pub fn build(b: *std.Build) void {
     b.installFile("logo/kwm-128px.png", "share/icons/hicolor/128x128/apps/kwm.png");
     b.installFile("logo/kwm-256px.png", "share/icons/hicolor/256x256/apps/kwm.png");
     b.installFile("logo/kwm.svg", "share/icons/hicolor/scalable/apps/kwm.svg");
+    if (bar_enabled) {
+        // The scripts of the script widgets in config.def.zon.
+        b.installBinFile("contrib/kwm-sleep-inhibit", "kwm-sleep-inhibit");
+        b.installBinFile("contrib/kwm-notifications", "kwm-notifications");
+        b.installBinFile("contrib/kwm-privacy", "kwm-privacy");
+    }
 
 
     // This creates a top level step. Top level steps have a name and can be

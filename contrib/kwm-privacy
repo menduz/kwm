@@ -1,0 +1,95 @@
+#!/usr/bin/env bash
+# A script widget of the kwm bar: a microphone and a camera that flash red
+# while a program uses them. It writes one line for each change, thus use it
+# with `.interval = 0`.
+#
+#   - Microphone: the PipeWire capture streams (Stream/Input/Audio) that run.
+#     The monitor streams and the peak meters of pavucontrol do not count.
+#   - Camera: the PipeWire cameras and video streams that run, and the
+#     programs that open /dev/video* themselves (most browsers). An open or a
+#     close of a video device starts a search in /proc.
+#
+# pw-dump --monitor and inotifywait wait for events, so the script uses no CPU
+# while nothing changes. kwm starts the script again when it stops.
+#
+# Needs: pw-dump (PipeWire), jq, inotifywait (inotify-tools), find, sed.
+# The icons are Nerd Font glyphs.
+# Configuration: .{ .script = .{ .exec = "kwm-privacy", .interval = 0, .return_type = .json } }
+set -euo pipefail
+
+# kwm stops the script with SIGTERM. Stop the pipelines too.
+trap 'trap - TERM EXIT; kill 0 2>/dev/null' TERM EXIT
+
+mic_icon=$'\U000F036C'
+cam_icon=$'\U000F05A0'
+
+# One line "pw {"mic": [...], "cam": [...]}" for each change in PipeWire.
+pipewire_streams() {
+  pw-dump --monitor --no-colors | jq -c --unbuffered -n '
+    foreach (inputs | .[]?) as $o ({};
+      ($o.id | tostring) as $k
+      | if $o.info == null then del(.[$k])
+        elif $o.type == "PipeWire:Interface:Node" or has($k) then .[$k] = ((.[$k] // {}) * $o.info)
+        else . end;
+      [ .[] | select(.state == "running") | .props // {} ] as $running
+      | {
+          mic: [ $running[]
+                 | select(."media.class" == "Stream/Input/Audio")
+                 | select((."stream.monitor" // false | tostring) != "true")
+                 | select(."media.name" != "Peak detect")
+                 | (."application.name" // ."node.name" // "?") ] | unique,
+          cam: [ $running[]
+                 | select(."media.class" == "Video/Source" or ."media.class" == "Stream/Input/Video")
+                 | (."application.name" // ."node.description" // ."node.name" // "?") ] | unique
+        })' | sed -u 's/^/pw /'
+}
+
+# One line "dev" at the start, and for each open or close of a video device.
+video_events() {
+  echo dev
+  shopt -s nullglob
+  local devices=(/dev/video*)
+  if [ ${#devices[@]} -eq 0 ]; then
+    sleep infinity
+  fi
+  inotifywait -m -q -e open -e close --format dev "${devices[@]}"
+}
+
+# The programs that have a video device open, without PipeWire.
+video_users() {
+  { find /proc/[0-9]*/fd -maxdepth 1 -lname '/dev/video*' 2>/dev/null || true; } \
+    | cut -d/ -f3 | sort -u \
+    | while read -r pid; do
+        comm=$(cat "/proc/$pid/comm" 2>/dev/null) || continue
+        case $comm in
+          pipewire | wireplumber | pipewire-media-session) ;;
+          *) echo "$comm" ;;
+        esac
+      done \
+    | jq -R . | jq -sc 'unique'
+}
+
+pw='{"mic": [], "cam": []}'
+dev='[]'
+last=""
+# When one source stops, stop all. kwm starts the script again.
+{ pipewire_streams & video_events & wait -n; kill 0; } | while read -r kind data; do
+  case $kind in
+    pw) pw=$data ;;
+    dev) dev=$(video_users) ;;
+  esac
+  state=$(jq -nc --argjson pw "$pw" --argjson dev "$dev" '{mic: $pw.mic, cam: ($pw.cam + $dev | unique)}')
+  if [ "$state" = "$last" ]; then
+    continue
+  fi
+  last=$state
+  jq -nc --argjson s "$state" --arg mic "$mic_icon" --arg cam "$cam_icon" '
+    if ($s.mic | length) + ($s.cam | length) == 0 then {text: ""}
+    else {
+      text: ([ (if ($s.mic | length) > 0 then $mic else empty end),
+               (if ($s.cam | length) > 0 then $cam else empty end) ] | join(" ")),
+      tooltip: ([ (if ($s.mic | length) > 0 then "Microphone: " + ($s.mic | join(", ")) else empty end),
+                  (if ($s.cam | length) > 0 then "Camera: " + ($s.cam | join(", ")) else empty end) ] | join("\n")),
+      class: ["critical", "blink"]
+    } end'
+done

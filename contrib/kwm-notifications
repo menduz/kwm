@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# A script widget of the kwm bar: "●" for the notifications of dunst. The
+# tooltip holds the number of notifications and the last 10 of the history.
+#
+# Needs: dunstctl (dunst), jq.
+# Configuration: .{ .script = .{ .exec = "kwm-notifications", .interval = 5000, .return_type = .json } }
+set -euo pipefail
+
+history=$(dunstctl history 2>/dev/null) || history='{"data":[[]]}'
+printf '%s' "$history" | jq -c '
+  (.data[0] // []) as $items
+  | if ($items | length) == 0 then
+      { text: "●", tooltip: "No notifications", class: "" }
+    else
+      {
+        text: "●",
+        class: "has-notifications",
+        tooltip: (
+          [ "\($items | length) notifications" ]
+          + [ $items[:10][]
+              | "\(.appname.data): \(.summary.data)"
+                + (if (.body.data // "") == "" then ""
+                   else " — " + (.body.data | gsub("\\s+"; " ")) end) ]
+          | join("\n")
+        )
+      }
+    end'
