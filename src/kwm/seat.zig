@@ -18,6 +18,8 @@ const config = @import("config");
 
 const types = @import("types.zig");
 const binding = @import("binding.zig");
+const widgets = @import("widgets.zig");
+const tooltip = @import("tooltip.zig");
 const Output = @import("output.zig");
 const Window = @import("window.zig");
 const Context = @import("context.zig");
@@ -50,7 +52,9 @@ chorded: struct {
         once_unbound_pressed,
     },
 } = .{ .state = .disabled, .quit_mode = .once_pressed },
-button: types.Button = undefined,
+// .none until the first wl_pointer.button event. A river interaction event
+// can come before it, for example with a new virtual pointer.
+button: types.Button = .none,
 focus_exclusive: bool = false,
 previous_focused: union(enum) {
     none,
@@ -67,6 +71,9 @@ window_below_pointer: struct {
     new: bool = false,
 } = .{},
 has_pointer_interaction: bool = false,
+/// The surface of kwm under the pointer, from wl_pointer, for the widgets.
+pointer_surface: ?*wl.Surface = null,
+pointer_surface_x: i32 = 0,
 unhandled_actions: std.ArrayList(binding.Action) = undefined,
 xkb_bindings: std.StringHashMap(std.ArrayList(*binding.XkbBinding)) = undefined,
 pointer_bindings: std.StringHashMap(std.ArrayList(*binding.PointerBinding)) = undefined,
@@ -726,6 +733,11 @@ fn handle_actions(self: *Self) void {
                     output.switch_to_previous_layout();
                 }
             },
+            .cycle_layout => |data| {
+                if (ctx.current_output) |output| {
+                    output.cycle_layout(data.direction);
+                }
+            },
             .toggle_bar => {
                 if (comptime build_options.bar_enabled) {
                     if (ctx.current_output) |output| {
@@ -892,6 +904,7 @@ fn shell_surface_interaction(self: *Self, shell_surface: *ShellSurface) void {
 
             ctx.set_current_output(background.output);
         } else unreachable,
+        .tooltip => {},
     }
 
     self.has_pointer_interaction = true;
@@ -1128,8 +1141,44 @@ fn wl_pointer_listener(wl_pointer: *wl.Pointer, event: wl.Pointer.Event, seat: *
             if (seat.cursor_shape_device) |cursor_shape_device| {
                 cursor_shape_device.setShape(0, .default);
             }
+
+            seat.pointer_surface = data.surface;
+            seat.pointer_surface_x = data.surface_x.toInt();
+            seat.hover_widget();
+        },
+        .motion => |data| {
+            seat.pointer_surface_x = data.surface_x.toInt();
+            seat.hover_widget();
+        },
+        .leave => {
+            seat.pointer_surface = null;
+            seat.hover_widget();
+        },
+        .axis => |data| {
+            if (data.axis != .vertical_scroll) return;
+            if (comptime build_options.bar_enabled) {
+                const target = seat.widget_under_pointer() orelse return;
+                widgets.scroll(target.side, target.index, data.value.toDouble());
+            }
         },
         else => {}
+    }
+}
+
+
+fn widget_under_pointer(self: *const Self) ?tooltip.Target {
+    const surface = self.pointer_surface orelse return null;
+    var it = ctx.outputs.safeIterator(.forward);
+    while (it.next()) |output| {
+        if (output.bar.widget_at(surface, self.pointer_surface_x)) |target| return target;
+    }
+    return null;
+}
+
+
+fn hover_widget(self: *const Self) void {
+    if (comptime build_options.bar_enabled) {
+        tooltip.hover(self.widget_under_pointer());
     }
 }
 

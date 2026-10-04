@@ -172,6 +172,10 @@ pub fn init(
     ctx.init_env_map();
     ctx.run_startup_cmds();
 
+    if (comptime build_options.bar_enabled) {
+        @import("widgets.zig").init();
+    }
+
     rwm.setListener(*Self, rwm_listener, &ctx);
     if (comptime build_options.kwim_enabled) {
         ctx.rwm_inputs = rwm_inputs;
@@ -198,6 +202,8 @@ pub fn deinit() void {
     log.info("deinit context", .{});
 
     if (comptime build_options.bar_enabled) {
+        @import("tooltip.zig").deinit();
+        @import("widgets.zig").deinit();
         @import("fcft").fini();
     }
 
@@ -371,6 +377,8 @@ pub fn reload_config(self: *Self) void {
     if (comptime build_options.bar_enabled) {
         if (mask.bar) {
             self.stop_listening_status();
+            @import("tooltip.zig").hover(null);
+            @import("widgets.zig").reload();
 
             var it = self.outputs.safeIterator(.forward);
             while (it.next()) |output| {
@@ -1292,6 +1300,8 @@ fn rwm_listener(rwm: *river.WindowManagerV1, event: river.WindowManagerV1.Event,
                 while (it.next()) |output| {
                     output.bar.render();
                 }
+
+                @import("tooltip.zig").render();
             }
 
             rwm.renderFinish();

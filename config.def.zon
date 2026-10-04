@@ -103,6 +103,9 @@
 
             .click = .{
                 .left = .switch_to_previous_layout,
+                // or round robin through all layouts:
+                // .left = .{ .cycle_layout = .{ .direction = .forward } },
+                // .right = .{ .cycle_layout = .{ .direction = .reverse } },
             },
         },
         // set null to disable title part
@@ -119,6 +122,30 @@
                 .middle = .{ .spawn = .{ .argv = .{ "foot" } } },
             },
         },
+
+        // widgets in the center of the bar and at the right end (see src/config/widget.zig)
+        // each widget takes the waybar click options: .on_click, .on_click_right,
+        // .on_click_middle, .on_scroll_up and .on_scroll_down (shell commands)
+        // e.g.
+        // .center = .{
+        //     .{ .memory = .{ .format = .braille, .on_click = "foot -e btop" } },
+        //     .{ .clock = .{ .format = "%a %d %H:%M", .tooltip = "%Y-%m-%dT%H:%M:%S%z" } },
+        //     .{ .cpu = .{ .format = .percent } },
+        // },
+        // .right = .{
+        //     // shown at 80% used, in the critical color below 10 GB free
+        //     .{ .disk = .{ .path = "/", .show = 80, .alert = 10000000000 } },
+        //     // waybar custom module: JSON lines with "text", "tooltip" and "class"
+        //     .{ .script = .{ .exec = "notifications.sh", .interval = 5000, .return_type = .json } },
+        // },
+        .center = .{},
+        .right = .{},
+        .widget_colors = .{
+            .warning = 0xffa500ff,
+            .critical = 0xff5555ff,
+        },
+        // milliseconds before the tooltip of a widget shows
+        .tooltip_delay = 500,
 
         // override colors
         .override_colors = .{

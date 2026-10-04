@@ -1,0 +1,274 @@
+//! Runtime of the bar widgets. Refer to src/config/widget.zig.
+//!
+//! Each widget type has a file in widgets/. This file keeps the state of the
+//! widgets, updates them with a timer, and runs their click commands.
+
+const std = @import("std");
+const Io = std.Io;
+const mem = std.mem;
+const log = std.log.scoped(.widgets);
+
+const build_options = @import("build_options");
+const posix = @import("posix");
+const config = @import("config");
+
+const types = @import("types.zig");
+const Context = @import("context.zig");
+const common = @import("widgets/common.zig");
+const clock = @import("widgets/clock.zig");
+const cpu = @import("widgets/cpu.zig");
+const disk = @import("widgets/disk.zig");
+const mem_widget = @import("widgets/mem.zig");
+const net = @import("widgets/net.zig");
+const script = @import("widgets/script.zig");
+
+const Widget = config.widget.Widget;
+
+const ctx = Context.get();
+
+pub const Side = enum { center, right };
+
+/// The maximum number of widgets on one side.
+pub const max_widgets = 16;
+
+pub const State = struct {
+    /// The text on the bar. It can have `^#RRGGBBAA` and `^#!` color codes.
+    text: std.ArrayList(u8) = .empty,
+    /// The text of the tooltip. Lines are separated by '\n'.
+    tooltip: std.ArrayList(u8) = .empty,
+    hidden: bool = false,
+    /// Awake-clock milliseconds of the next update.
+    next_update: i64 = 0,
+    scroll: f64 = 0,
+
+    cpu: cpu.Data = .{},
+    net: net.Data = .{},
+    script: script.Data = null,
+
+    fn deinit(self: *State) void {
+        script.stop(&self.script);
+        self.text.deinit(ctx.gpa);
+        self.tooltip.deinit(ctx.gpa);
+    }
+};
+
+var center_states: std.ArrayList(State) = .empty;
+var right_states: std.ArrayList(State) = .empty;
+var ticking = false;
+
+
+pub fn items(side: Side) []const Widget {
+    const list = switch (side) {
+        .center => ctx.cfg.bar.center,
+        .right => ctx.cfg.bar.right,
+    };
+    return list[0..@min(list.len, max_widgets)];
+}
+
+
+pub fn states(side: Side) []State {
+    return switch (side) {
+        .center => center_states.items,
+        .right => right_states.items,
+    };
+}
+
+
+/// Make the state of the widgets in the configuration, and start the timer.
+pub fn init() void {
+    clock.init();
+
+    inline for ([_]Side { .center, .right }) |side| {
+        const list = switch (side) {
+            .center => &center_states,
+            .right => &right_states,
+        };
+        list.appendNTimes(ctx.gpa, .{}, items(side).len) catch |err| {
+            log.err("allocate widget states failed: {}", .{ err });
+        };
+    }
+
+    if (!ticking and (center_states.items.len > 0 or right_states.items.len > 0)) {
+        ticking = true;
+        ctx.run_later(.fromMilliseconds(0), tick);
+    }
+}
+
+
+pub fn deinit() void {
+    for (center_states.items) |*state| state.deinit();
+    for (right_states.items) |*state| state.deinit();
+    center_states.clearAndFree(ctx.gpa);
+    right_states.clearAndFree(ctx.gpa);
+    net.deinit();
+}
+
+
+/// Call after a reload of the configuration. The widgets keep pointers into
+/// the old configuration, so make all of them again.
+pub fn reload() void {
+    deinit();
+    init();
+}
+
+
+fn tick(_: *Context) void {
+    if (center_states.items.len == 0 and right_states.items.len == 0) {
+        ticking = false;
+        return;
+    }
+
+    const now = Io.Timestamp.now(ctx.io, .awake).toMilliseconds();
+    var changed = false;
+    inline for ([_]Side { .center, .right }) |side| {
+        for (items(side), states(side)) |*item, *state| {
+            if (now >= state.next_update) {
+                if (update(item, state, now)) changed = true;
+            }
+        }
+    }
+    if (changed) damage_bars();
+
+    ctx.run_later(.fromMilliseconds(1000), tick);
+}
+
+
+/// Update one widget. Return true when it changed.
+fn update(item: *const Widget, state: *State, now: i64) bool {
+    var out: common.Output = .{};
+    defer out.deinit();
+
+    const interval: i64 = switch (item.*) {
+        .script => |cfg| {
+            if (state.script == null) {
+                state.script = script.start(cfg.exec);
+                // With interval 0, start the command again 5 seconds after
+                // it stops.
+                state.next_update = now + if (cfg.interval == 0) 5000 else cfg.interval;
+            } else {
+                state.next_update = if (cfg.interval == 0) std.math.maxInt(i64) else now + cfg.interval;
+            }
+            return false;
+        },
+        inline else => |cfg| cfg.interval,
+    };
+    state.next_update = now + interval;
+
+    (switch (item.*) {
+        .memory => |*cfg| mem_widget.update(cfg, &out),
+        .cpu => |*cfg| cpu.update(cfg, &state.cpu, &out),
+        .clock => |*cfg| clock.update(cfg, &out),
+        .disk => |*cfg| disk.update(cfg, &out),
+        .network => |*cfg| net.update(cfg, &state.net, &out),
+        .script => unreachable,
+    }) catch |err| {
+        log.warn("update widget {s} failed: {}", .{ @tagName(item.*), err });
+        return false;
+    };
+
+    return set(state, &out);
+}
+
+
+fn set(state: *State, out: *const common.Output) bool {
+    if (state.hidden == out.hidden
+        and mem.eql(u8, state.text.items, out.text.items)
+        and mem.eql(u8, state.tooltip.items, out.tooltip.items)) return false;
+
+    state.hidden = out.hidden;
+    state.text.clearRetainingCapacity();
+    state.text.appendSlice(ctx.gpa, out.text.items) catch return false;
+    state.tooltip.clearRetainingCapacity();
+    state.tooltip.appendSlice(ctx.gpa, out.tooltip.items) catch return false;
+    return true;
+}
+
+
+fn damage_bars() void {
+    if (comptime build_options.bar_enabled) {
+        var shown: usize = 0;
+        var it = ctx.outputs.safeIterator(.forward);
+        while (it.next()) |output| {
+            output.bar.damage(.status);
+            if (!output.bar.hidden) shown += 1;
+        }
+        if (shown > 0) ctx.rwm.manageDirty();
+
+        @import("tooltip.zig").damage();
+    }
+}
+
+
+// Scripts --------------------------------------------------------------------
+
+/// The file descriptors of the running scripts, for poll.
+pub fn script_fds(buffer: []posix.fd_t) []posix.fd_t {
+    var len: usize = 0;
+    for ([_][]State { center_states.items, right_states.items }) |list| {
+        for (list) |state| {
+            const process = state.script orelse continue;
+            if (len == buffer.len) break;
+            buffer[len] = process.fd;
+            len += 1;
+        }
+    }
+    return buffer[0..len];
+}
+
+
+/// Read the output of the script with this file descriptor.
+pub fn handle_script_fd(fd: posix.fd_t) void {
+    inline for ([_]Side { .center, .right }) |side| {
+        for (items(side), states(side)) |*item, *state| {
+            const process = state.script orelse continue;
+            if (process.fd != fd) continue;
+
+            var out: common.Output = .{};
+            defer out.deinit();
+            const new_line = script.read(&item.script, &state.script, &out) catch |err| blk: {
+                log.warn("read script failed: {}", .{ err });
+                break :blk false;
+            };
+            if (new_line and set(state, &out)) damage_bars();
+            return;
+        }
+    }
+}
+
+
+// Clicks ---------------------------------------------------------------------
+
+fn command(item: *const Widget, comptime field: []const u8) ?[]const u8 {
+    return switch (item.*) {
+        inline else => |widget| @field(widget, field),
+    };
+}
+
+
+/// Run the click command of a widget for a button.
+pub fn click(side: Side, index: usize, button: types.Button) void {
+    const item = &items(side)[index];
+    const cmd = switch (button) {
+        .left => command(item, "on_click"),
+        .right => command(item, "on_click_right"),
+        .middle => command(item, "on_click_middle"),
+        else => null,
+    } orelse return;
+    ctx.spawn_shell(cmd);
+}
+
+
+/// Run the scroll commands of a widget. `value` is the axis value of
+/// wl_pointer: positive is down. One wheel step is 15.
+pub fn scroll(side: Side, index: usize, value: f64) void {
+    const item = &items(side)[index];
+    const state = &states(side)[index];
+
+    state.scroll += value;
+    while (@abs(state.scroll) >= 15) {
+        const down = state.scroll > 0;
+        state.scroll -= if (down) 15 else -15;
+        const cmd = (if (down) command(item, "on_scroll_down") else command(item, "on_scroll_up")) orelse continue;
+        ctx.spawn_shell(cmd);
+    }
+}

@@ -16,6 +16,7 @@ const rule = @import("config/rule.zig");
 const constants = @import("config/constants.zig");
 const preprocess = @import("config/preprocess.zig");
 pub const meta = @import("config/meta.zig");
+pub const widget = @import("config/widget.zig");
 
 // work around for zig issue: https://codeberg.org/ziglang/zig/issues/31570
 pub const Modifiers = meta.unpacked(river.SeatV1.Modifiers);

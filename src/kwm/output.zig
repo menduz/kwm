@@ -338,6 +338,20 @@ pub fn switch_to_previous_layout(self: *Self) void {
 }
 
 
+pub fn cycle_layout(self: *Self, direction: types.Direction) void {
+    log.debug("<{*}> tag {b} cycle layout {s}", .{ self, self.main_tag, @tagName(direction) });
+
+    const i = @ctz(self.main_tag);
+    const count = @typeInfo(Layout.Type).@"enum".fields.len;
+    const current: usize = @intFromEnum(self.layout_tag[i]);
+    const next = switch (direction) {
+        .forward => (current + 1) % count,
+        .reverse => (current + count - 1) % count,
+    };
+    self.set_current_layout(@enumFromInt(next));
+}
+
+
 pub fn manage(self: *Self) void {
     switch (self.current_layout()) {
         .float => {},

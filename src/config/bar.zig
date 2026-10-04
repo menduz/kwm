@@ -6,6 +6,7 @@ const mem = std.mem;
 const kwm = @import("kwm");
 
 const meta = @import("meta.zig");
+pub const widget = @import("widget.zig");
 
 const Color = struct {
     fg: u32,
@@ -93,6 +94,19 @@ status: ?struct {
         ?kwm.BindingAction
     ),
 },
+
+/// Widgets in the center of the bar, and at the right end of the bar.
+/// Refer to widget.zig.
+center: []const widget.Widget = &.{},
+right: []const widget.Widget = &.{},
+
+widget_colors: struct {
+    warning: u32 = 0xffa500ff,
+    critical: u32 = 0xff5555ff,
+} = .{},
+
+/// Milliseconds that the pointer stays on a widget before its tooltip shows.
+tooltip_delay: u32 = 500,
 
 override_colors: []const struct {
     area: BarArea,

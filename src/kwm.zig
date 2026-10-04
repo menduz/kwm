@@ -13,12 +13,14 @@ const types = @import("kwm/types.zig");
 const binding = @import("kwm/binding.zig");
 const Window = @import("kwm/window.zig");
 const Context = @import("kwm/context.zig");
+const widgets = @import("kwm/widgets.zig");
 
 const FDType = enum {
     wayland,
     signal,
     bar_status,
     key_repeat,
+    widget_script,
 };
 
 pub const Layout = @import("kwm/layout.zig");
@@ -51,7 +53,8 @@ pub fn run(wl_display: *wl.Display) !void {
     const signal_fd = try posix.signalfd(-1, &mask, (1 << @bitOffsetOf(posix.O, "NONBLOCK")) | (1 << @bitOffsetOf(posix.O, "CLOEXEC")));
     defer posix.close(signal_fd);
 
-    const fd_type_num = @typeInfo(FDType).@"enum".fields.len;
+    // One more file descriptor for each widget script.
+    const fd_type_num = @typeInfo(FDType).@"enum".fields.len + 2 * widgets.max_widgets;
     var fd_buffer: [fd_type_num]posix.pollfd = undefined;
     var fd_type_buffer: [fd_type_num]FDType = undefined;
     var poll_fds: std.ArrayList(posix.pollfd) = .initBuffer(&fd_buffer);
@@ -82,6 +85,14 @@ pub fn run(wl_display: *wl.Display) !void {
             }
         }
 
+        if (comptime build_options.bar_enabled) {
+            var script_fd_buffer: [2 * widgets.max_widgets]posix.fd_t = undefined;
+            for (widgets.script_fds(&script_fd_buffer)) |fd| {
+                try poll_fds.appendBounded(.{ .fd = fd, .events = posix.POLL.IN, .revents = 0 });
+                try fd_types.appendBounded(.widget_script);
+            }
+        }
+
         ctx.run_timer_tasks();
         _ = wl_display.flush();
 
@@ -93,7 +104,9 @@ pub fn run(wl_display: *wl.Display) !void {
         _ = try posix.poll(poll_fds.items, @intCast(timeout));
 
         for (fd_types.items, poll_fds.items) |fd_type, poll_fd| {
-            if (poll_fd.revents & posix.POLL.IN != 0) {
+            // A script that stops gives POLL.HUP. Read to the end of the pipe.
+            const events: i16 = if (fd_type == .widget_script) posix.POLL.IN | posix.POLL.HUP else posix.POLL.IN;
+            if (poll_fd.revents & events != 0) {
                 switch (fd_type) {
                     .wayland => if (wl_display.dispatch() != .SUCCESS) return error.DispatchFailed,
                     .signal => {
@@ -105,6 +118,7 @@ pub fn run(wl_display: *wl.Display) !void {
                         const count = try read(u64, poll_fd.fd) orelse continue;
                         ctx.key_repeat.?.repeat(count);
                     },
+                    .widget_script => if (comptime build_options.bar_enabled) widgets.handle_script_fd(poll_fd.fd),
                 }
             }
         }

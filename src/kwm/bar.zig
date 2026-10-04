@@ -23,6 +23,8 @@ const Context = @import("context.zig");
 const Seat = @import("seat.zig");
 const Output = @import("output.zig");
 const ShellSurface = @import("shell_surface.zig");
+const widgets = @import("widgets.zig");
+const tooltip = @import("tooltip.zig");
 
 const ctx = Context.get();
 const color_pattern = mvzr.compile("\\^#([0-9a-zA-Z]{8}|!)").?;
@@ -49,6 +51,17 @@ dynamic_splits_buffer: [@typeInfo(types.BarArea).@"enum".fields.len-2]i32 = unde
 static_splits: std.ArrayList(i32) = .empty,
 dynamic_splits: std.ArrayList(i32) = undefined,
 
+/// The places of the widgets in the dynamic component, in physical pixels.
+widget_rects_buffer: [2 * widgets.max_widgets]WidgetRect = undefined,
+widget_rects: std.ArrayList(WidgetRect) = undefined,
+
+const WidgetRect = struct {
+    side: widgets.Side,
+    index: usize,
+    x0: i32,
+    x1: i32,
+};
+
 
 pub fn init(self: *Self, output: *Output) !void {
     log.debug("<{*}> init", .{ self });
@@ -65,6 +78,7 @@ pub fn init(self: *Self, output: *Output) !void {
     errdefer self.font.deinit();
 
     self.dynamic_splits = .initBuffer(&self.dynamic_splits_buffer);
+    self.widget_rects = .initBuffer(&self.widget_rects_buffer);
 
     if (!self.hidden) {
         try self.show();
@@ -152,6 +166,10 @@ pub fn handle_click(self: *Self, seat: *Seat) void {
     }
 
     x -= self.static_component_width();
+    if (self.widget_index_at(x)) |rect| {
+        widgets.click(rect.side, rect.index, seat.button);
+        return;
+    }
     inline for (0.., &[_]types.BarArea { .mode, .layout, .title }) |i, area_type| {
         if (ctx.cfg.bar.get(area_type)) |area| {
             if (x <= self.dynamic_splits.items[i]) {
@@ -166,6 +184,30 @@ pub fn handle_click(self: *Self, seat: *Seat) void {
             action = area.click.getter.get(seat.button) orelse return;
         }
     }
+}
+
+
+fn widget_index_at(self: *const Self, x: i32) ?WidgetRect {
+    for (self.widget_rects.items) |rect| {
+        if (x >= rect.x0 and x < rect.x1) return rect;
+    }
+    return null;
+}
+
+
+/// The widget under a pointer at `surface_x` on `surface`, for the tooltip
+/// and for scroll events.
+pub fn widget_at(self: *Self, surface: *wl.Surface, surface_x: i32) ?tooltip.Target {
+    if (self.hidden or surface != self.dynamic_component.wl_surface) return null;
+
+    const x = utils.logical2physics(i32, surface_x, self.scale);
+    const rect = self.widget_index_at(x) orelse return null;
+    return .{
+        .bar = self,
+        .side = rect.side,
+        .index = rect.index,
+        .x = self.output.x + utils.physics2logical(i32, self.static_component_width() + rect.x0, self.scale),
+    };
 }
 
 
@@ -645,6 +687,27 @@ fn render_dynamic_component(self: *Self) void {
     }
     self.dynamic_splits.appendBounded(@intCast(w)) catch unreachable;
 
+    self.widget_rects.clearRetainingCapacity();
+    const status_scheme = ctx.cfg.bar.get_scheme(.status).normal;
+    const status_fg = render_.utils.color(status_scheme.fg);
+    const status_bg = render_.utils.color(status_scheme.bg);
+
+    // The widgets at the right end. `right_x` is where they start.
+    var right_x: i16 = @intCast(w);
+    draw_right: {
+        var right = self.rasterize_widgets(.right, status_fg) catch |err| {
+            log.warn("<{*}> rasterize right widgets failed: {}", .{ self, err });
+            break :draw_right;
+        };
+        defer right.deinit();
+        if (right.width == 0) break :draw_right;
+
+        right_x = @max(title_start, @as(i16, @intCast(w -| @as(u16, @intCast(right.width)) -| pad)));
+        self.draw_widgets(buffer, &right, right_x, w, &status_bg, pad, y);
+    }
+
+    // The status text, at the left of the right widgets.
+    var status_x = right_x;
     if (ctx.cfg.bar.status) |area| draw_status: {
         const status_text: []const u8 = mem.trimEnd(
             u8,
@@ -656,89 +719,181 @@ fn render_dynamic_component(self: *Self) void {
         );
         if (status_text.len == 0) break :draw_status;
 
-        const color = ctx.cfg.bar.get_scheme(.status).normal;
-        const fg = render_.utils.color(color.fg);
-        const bg = render_.utils.color(color.bg);
+        var status = self.rasterize_status(status_text, status_fg) catch |err| {
+            log.warn("<{*}> rasterize status failed: {}", .{ self, err });
+            break :draw_status;
+        };
+        defer status.deinit();
 
-        status_block: {
-            var texts: std.ArrayList(struct { pixman.Color, *const fcft.TextRun }) = .empty;
-            defer {
-                for (texts.items) |item| {
-                    item[1].destroy();
-                }
-                texts.deinit(ctx.gpa);
-            }
+        status_x = @max(title_start, right_x -| @as(i16, @intCast(status.width)) -| @as(i16, @intCast(pad)));
+        bg_rect[0].x = status_x;
+        bg_rect[0].width = @as(u16, @intCast(right_x)) - @as(u16, @intCast(status_x));
+        _ = pixman.Image.fillRectangles(.src, buffer.image, &status_bg, 1, &bg_rect);
 
-            var i: usize = 0;
-            var c = fg;
-            var it = color_pattern.iterator(status_text);
-            var match = it.next();
-            while (i < status_text.len) {
-                if (match == null or i < match.?.start) {
-                    const end = if (match) |m| m.start else status_text.len;
-                    defer i = end;
-
-                    const utf8 = render_.utils.to_utf8(ctx.gpa, status_text[i..end]) catch |err| {
-                        log.warn("<{*}> to_utf8 failed: {}", .{ self, err });
-                        break :status_block;
-                    };
-                    defer ctx.gpa.free(utf8);
-
-                    texts.append(
-                        ctx.gpa,
-                        .{
-                            c,
-                            self.font.rasterize_text_run(utf8) orelse break :status_block
-                        },
-                    ) catch |err| {
-                        log.err("<{*}> append failed: {}", .{ self, err });
-                        break :status_block;
-                    };
-                } else if (i == match.?.start) blk: {
-                    defer {
-                        i += match.?.slice.len;
-                        match = it.next();
-                    }
-
-                    if (match.?.slice.len == 3) {
-                        c = fg;
-                    } else {
-                        const hex = match.?.slice[2..];
-                        c = render_.utils.color(fmt.parseInt(u32, hex, 16) catch |err| {
-                            log.err("parseInt failed: {}", .{ err });
-                            break :blk;
-                        });
-                    }
-                } else unreachable;
-            }
-
-            var width: u32 = 0;
-            for (texts.items) |item| {
-                _, const text = item;
-                width += render_.utils.text_width(text);
-            }
-            x = @max(
-                title_start,
-                @as(i16, @intCast(w -| @as(u16, @intCast(width)) -| pad))
-            );
-
-            self.dynamic_splits.items[self.dynamic_splits.items.len-1] = x;
-
-            bg_rect[0].x = x;
-            bg_rect[0].width = w - @as(u16, @intCast(x));
-            _ = pixman.Image.fillRectangles(.src, buffer.image, &bg, 1, &bg_rect);
-
-            x += @as(i16, @intCast(@divFloor(pad, 2)));
-            for (texts.items) |item| {
-                const cc, const text = item;
-                x += self.font.render_text(buffer, text, &cc, x, y);
-            }
+        x = status_x + @as(i16, @intCast(@divFloor(pad, 2)));
+        for (status.runs.items) |item| {
+            const cc, const text = item;
+            x += self.font.render_text(buffer, text, &cc, x, y);
         }
     }
+
+    // The widgets in the center of the output. They hide the end of a long
+    // title, and they move left when the right side needs the space.
+    var center_x = status_x;
+    draw_center: {
+        var center = self.rasterize_widgets(.center, status_fg) catch |err| {
+            log.warn("<{*}> rasterize center widgets failed: {}", .{ self, err });
+            break :draw_center;
+        };
+        defer center.deinit();
+        if (center.width == 0) break :draw_center;
+
+        const center_w: i32 = @as(i32, @intCast(center.width)) + pad;
+        const output_center = @divFloor(utils.logical2physics(i32, self.output.width, self.scale), 2)
+            - self.static_component_width();
+        var start: i32 = @min(output_center - @divFloor(center_w, 2), @as(i32, status_x) - center_w);
+        start = @max(start, title_start);
+        center_x = @intCast(start);
+        self.draw_widgets(buffer, &center, center_x, @intCast(status_x), &status_bg, pad, y);
+    }
+
+    self.dynamic_splits.items[self.dynamic_splits.items.len-1] = @min(center_x, status_x);
 
     self.dynamic_component.render(buffer, self.scale);
 }
 
+
+const StatusText = struct {
+    runs: std.ArrayList(struct { pixman.Color, *const fcft.TextRun }) = .empty,
+    width: u32 = 0,
+
+    fn deinit(self: *StatusText) void {
+        for (self.runs.items) |item| {
+            item[1].destroy();
+        }
+        self.runs.deinit(ctx.gpa);
+    }
+};
+
+
+/// Rasterize a status text. `^#RRGGBBAA` changes the color of the text that
+/// follows, and `^#!` sets the default color again.
+fn rasterize_status(self: *Self, status_text: []const u8, fg: pixman.Color) !StatusText {
+    var result: StatusText = .{};
+    errdefer result.deinit();
+
+    var i: usize = 0;
+    var c = fg;
+    var it = color_pattern.iterator(status_text);
+    var match = it.next();
+    while (i < status_text.len) {
+        if (match == null or i < match.?.start) {
+            const end = if (match) |m| m.start else status_text.len;
+            defer i = end;
+
+            const utf8 = try render_.utils.to_utf8(ctx.gpa, status_text[i..end]);
+            defer ctx.gpa.free(utf8);
+
+            const text = self.font.rasterize_text_run(utf8) orelse return error.RasterizeFailed;
+            result.runs.append(ctx.gpa, .{ c, text }) catch |err| {
+                text.destroy();
+                return err;
+            };
+        } else if (i == match.?.start) blk: {
+            defer {
+                i += match.?.slice.len;
+                match = it.next();
+            }
+
+            if (match.?.slice.len == 3) {
+                c = fg;
+            } else {
+                const hex = match.?.slice[2..];
+                c = render_.utils.color(fmt.parseInt(u32, hex, 16) catch |err| {
+                    log.err("parseInt failed: {}", .{ err });
+                    break :blk;
+                });
+            }
+        } else unreachable;
+    }
+
+    for (result.runs.items) |item| {
+        _, const text = item;
+        result.width += render_.utils.text_width(text);
+    }
+    return result;
+}
+
+
+/// The rasterized widgets of one side, with the space between them.
+const WidgetRow = struct {
+    side: widgets.Side,
+    texts: std.ArrayList(struct { index: usize, text: StatusText }) = .empty,
+    gap: u32 = 0,
+    width: u32 = 0,
+
+    fn deinit(self: *WidgetRow) void {
+        for (self.texts.items) |*item| item.text.deinit();
+        self.texts.deinit(ctx.gpa);
+    }
+};
+
+
+fn rasterize_widgets(self: *Self, side: widgets.Side, fg: pixman.Color) !WidgetRow {
+    var row: WidgetRow = .{ .side = side, .gap = @intCast(self.get_pad()) };
+    errdefer row.deinit();
+
+    for (0.., widgets.states(side)) |index, state| {
+        if (state.hidden or state.text.items.len == 0) continue;
+
+        var text = try self.rasterize_status(state.text.items, fg);
+        errdefer text.deinit();
+        if (row.texts.items.len > 0) row.width += row.gap;
+        row.width += text.width;
+        try row.texts.append(ctx.gpa, .{ .index = index, .text = text });
+    }
+    return row;
+}
+
+
+/// Fill the background from `x0` to `x1`, and draw the widgets from `x0`.
+fn draw_widgets(
+    self: *Self,
+    buffer: *render_.Buffer,
+    row: *const WidgetRow,
+    x0: i16,
+    x1: u16,
+    bg: *const pixman.Color,
+    pad: u16,
+    y: i16,
+) void {
+    var rect = [_]pixman.Rectangle16 {
+        .{
+            .x = x0,
+            .y = 0,
+            .width = x1 -| @as(u16, @intCast(x0)),
+            .height = @intCast(self.height(false)),
+        },
+    };
+    _ = pixman.Image.fillRectangles(.src, buffer.image, bg, 1, &rect);
+
+    const half_gap: i32 = @intCast(row.gap / 2);
+    var x: i32 = x0 + @as(i32, @intCast(@divFloor(pad, 2)));
+    for (row.texts.items) |item| {
+        const start = x;
+        for (item.text.runs.items) |run| {
+            const cc, const text = run;
+            x += self.font.render_text(buffer, text, &cc, x, y);
+        }
+        self.widget_rects.appendBounded(.{
+            .side = row.side,
+            .index = item.index,
+            .x0 = start - half_gap,
+            .x1 = x + half_gap,
+        }) catch {};
+        x += @intCast(row.gap);
+    }
+}
 
 fn show(self: *Self) !void {
     std.debug.assert(!self.hidden);
@@ -781,6 +936,9 @@ fn hide(self: *Self) void {
     std.debug.assert(self.hidden);
 
     log.debug("<{*}> hide", .{ self });
+
+    tooltip.forget(self);
+    self.widget_rects.clearRetainingCapacity();
 
     self.static_component.deinit();
     self.static_component = undefined;
