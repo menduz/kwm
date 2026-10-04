@@ -603,6 +603,9 @@
     .window_rules = .{
         .{ .app_id = .{ .str = "org.keepassxc.KeePassXC" }, .floating = true },
         .{ .app_id = .{ .str = "opensnitch_ui" }, .floating = true },
+        // the passphrase prompt of pinentry-gnome3 and of the GNOME keyring; its fixed size
+        // comes after the first layout, thus without this rule it shows tiled for an instant
+        .{ .app_id = .{ .str = "gcr-prompter" }, .floating = true },
         // e.g. ghostty --title=FloatingTerminal
         .{ .title = .{ .str = "FloatingTerminal" }, .floating = true },
     },
