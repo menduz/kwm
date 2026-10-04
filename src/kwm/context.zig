@@ -555,6 +555,9 @@ pub fn quit(self: *Self, exit_session: bool) void {
 pub fn focus(self: *Self, window: *Window, lift: bool) void {
     log.debug("<{*}> focus window: {*}", .{ self, window });
 
+    // The focus goes to a different window: close the tray menu.
+    if (self.focused_window() != window) self.dismiss_tray_menu();
+
     self.set_current_output(window.output);
     if (lift) self.window_to_lift = window;
 
@@ -902,6 +905,7 @@ pub fn set_current_output(self: *Self, output: ?*Output) void {
 
     if (self.current_output != output) {
         self.current_output = output;
+        self.dismiss_tray_menu();
 
         if (output) |o| {
             if (comptime build_options.bar_enabled) o.bar.damage(.title);
@@ -911,6 +915,12 @@ pub fn set_current_output(self: *Self, output: ?*Output) void {
             }
         }
     }
+}
+
+
+/// Close the menu of a tray item, if it shows. Refer to tray_menu.zig.
+pub fn dismiss_tray_menu(_: *Self) void {
+    if (comptime build_options.tray_enabled) @import("tray_menu.zig").dismiss();
 }
 
 

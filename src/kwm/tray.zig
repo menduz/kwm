@@ -355,6 +355,11 @@ pub fn click(item: *Item, button: types.Button, x: i32, y: i32, place: MenuPlace
 /// dbusmenu gets ContextMenu, and shows its menu itself.
 fn show_menu(item: *Item) void {
     const b = bus orelse return;
+    // A second click on the item closes its menu.
+    if (tray_menu.is_open(item.service)) {
+        tray_menu.dismiss();
+        return;
+    }
     if (item.props.menu.len == 0 or mem.eql(u8, item.props.menu, "/")) {
         call_action(item, "ContextMenu");
         return;

@@ -75,6 +75,8 @@ const Menu = struct {
 };
 
 var menu: ?*Menu = null;
+/// The number of menus that opened. Refer to `opened`.
+var open_count: u32 = 0;
 
 const no_id = -1;
 /// The indentation of the items of a submenu, for each level.
@@ -84,10 +86,36 @@ const indent = "    ";
 /// Show the menu at `path` of the item at `service`.
 pub fn open(bus: *sd.Bus, service: []const u8, path: []const u8, title: []const u8, place: Place) void {
     close();
+    open_count +%= 1;
     start(bus, service, path, title, place) catch |err| {
         log.err("open the menu of {s} failed: {}", .{ service, err });
         close();
     };
+}
+
+
+/// A value that changes each time that a menu opens. Compare the values
+/// before and after a click to know if the click opened a menu.
+pub fn opened() u32 {
+    return open_count;
+}
+
+
+/// True when the menu of the item at `service` shows.
+pub fn is_open(service: []const u8) bool {
+    const m = menu orelse return false;
+    return mem.eql(u8, m.service, service);
+}
+
+
+/// Close the menu without a choice: send "closed" to the item, then stop
+/// the menu program. kwm does this when the user clicks a different
+/// window, focuses a different window, or goes to a different output.
+pub fn dismiss() void {
+    const m = menu orelse return;
+    log.debug("{s}: dismiss the menu", .{ m.service });
+    send_event(m, 0, "closed");
+    close();
 }
 
 
@@ -99,7 +127,10 @@ pub fn close() void {
     for (m.submenu_slots.items) |slot| _ = sd.sd_bus_slot_unref(slot);
     m.submenu_slots.deinit(ctx.gpa);
     if (m.process) |*process| {
-        _ = std.c.kill(process.pid, .TERM);
+        // The program has its own session (setsid), thus its process group
+        // has the same id. Stop the group, so that a wrapper script does
+        // not keep the menu open.
+        _ = std.c.kill(-process.pid, .TERM);
         posix.close(process.fd);
         process.output.deinit(ctx.gpa);
     }

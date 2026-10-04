@@ -883,6 +883,8 @@ fn handle_actions(self: *Self) void {
 fn window_interaction(self: *Self, window: *Window) void {
     log.debug("<{*}> interaction with window {*}", .{ self, window });
 
+    // A click on a window closes the tray menu, also on the focused window.
+    ctx.dismiss_tray_menu();
     ctx.focus(window, true);
     self.has_pointer_interaction = true;
 }
@@ -898,12 +900,19 @@ fn shell_surface_interaction(self: *Self, shell_surface: *ShellSurface) void {
 
             ctx.set_current_output(bar.output);
 
+            // A click that does not open a tray menu closes the tray menu.
+            const opened = if (comptime build_options.tray_enabled)
+                @import("tray_menu.zig").opened() else 0;
             bar.handle_click(self);
+            if (comptime build_options.tray_enabled) {
+                if (@import("tray_menu.zig").opened() == opened) ctx.dismiss_tray_menu();
+            }
         } else unreachable,
         .background => |background| if (comptime build_options.background_enabled) {
             log.debug("<{*}> interaction with {*}", .{ self, background });
 
             ctx.set_current_output(background.output);
+            ctx.dismiss_tray_menu();
         } else unreachable,
         .tooltip => {},
     }
