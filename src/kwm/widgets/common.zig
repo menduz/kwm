@@ -16,6 +16,9 @@ pub const Output = struct {
     /// The text of the tooltip. Lines are separated by '\n'.
     tooltip: std.ArrayList(u8) = .empty,
     hidden: bool = false,
+    /// The widget flashes: its text changes between its colors and the
+    /// color of the bar text.
+    blink: bool = false,
 
     pub fn deinit(self: *Output) void {
         self.text.deinit(ctx.gpa);

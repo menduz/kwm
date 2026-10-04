@@ -124,6 +124,15 @@ pub fn read(cfg: anytype, data: *Data, out: *common.Output) !bool {
 }
 
 
+/// The classes "warning" and "critical" give a color. The class "blink"
+/// makes the widget flash.
+fn apply_class(name: []const u8, color: *?u32, out: *common.Output) void {
+    if (mem.eql(u8, name, "critical")) color.* = ctx.cfg.bar.widget_colors.critical;
+    if (mem.eql(u8, name, "warning") and color.* == null) color.* = ctx.cfg.bar.widget_colors.warning;
+    if (mem.eql(u8, name, "blink")) out.blink = true;
+}
+
+
 fn parse(cfg: anytype, line: []const u8, out: *common.Output) !void {
     switch (cfg.return_type) {
         .text => try out.text.appendSlice(ctx.gpa, line),
@@ -136,12 +145,17 @@ fn parse(cfg: anytype, line: []const u8, out: *common.Output) !void {
             if (parsed.value != .object) return error.BadJson;
             const object = parsed.value.object;
 
-            const color: ?u32 = if (object.get("class")) |class| blk: {
-                const name = if (class == .string) class.string else break :blk null;
-                if (mem.eql(u8, name, "critical")) break :blk ctx.cfg.bar.widget_colors.critical;
-                if (mem.eql(u8, name, "warning")) break :blk ctx.cfg.bar.widget_colors.warning;
-                break :blk null;
-            } else null;
+            // "class" is a name or a list of names, as in waybar.
+            var color: ?u32 = null;
+            if (object.get("class")) |class| switch (class) {
+                .string => |name| apply_class(name, &color, out),
+                .array => |names| for (names.items) |name| {
+                    if (name == .string) apply_class(name.string, &color, out);
+                },
+                else => {},
+            };
+            // A flashing widget is red when no class gives a color.
+            if (out.blink and color == null) color = ctx.cfg.bar.widget_colors.critical;
             if (object.get("text")) |value| if (value == .string) {
                 try common.append_colored(&out.text, color, value.string);
             };

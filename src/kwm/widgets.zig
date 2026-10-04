@@ -40,6 +40,10 @@ pub const State = struct {
     /// The text of the tooltip. Lines are separated by '\n'.
     tooltip: std.ArrayList(u8) = .empty,
     hidden: bool = false,
+    /// The widget flashes. Refer to `text`.
+    blink: bool = false,
+    /// `text` without the color codes, for the flashing.
+    plain: std.ArrayList(u8) = .empty,
     /// Awake-clock milliseconds of the next update.
     next_update: i64 = 0,
     scroll: f64 = 0,
@@ -51,6 +55,7 @@ pub const State = struct {
     fn deinit(self: *State) void {
         script.stop(&self.script);
         self.text.deinit(ctx.gpa);
+        self.plain.deinit(ctx.gpa);
         self.tooltip.deinit(ctx.gpa);
     }
 };
@@ -177,15 +182,86 @@ fn update(item: *const Widget, state: *State, now: i64) bool {
 
 fn set(state: *State, out: *const common.Output) bool {
     if (state.hidden == out.hidden
+        and state.blink == out.blink
         and mem.eql(u8, state.text.items, out.text.items)
         and mem.eql(u8, state.tooltip.items, out.tooltip.items)) return false;
 
     state.hidden = out.hidden;
+    state.blink = out.blink;
     state.text.clearRetainingCapacity();
     state.text.appendSlice(ctx.gpa, out.text.items) catch return false;
+    state.plain.clearRetainingCapacity();
+    strip_colors(&state.plain, out.text.items) catch return false;
     state.tooltip.clearRetainingCapacity();
     state.tooltip.appendSlice(ctx.gpa, out.tooltip.items) catch return false;
+    if (state.blink and !state.hidden) start_blinking();
     return true;
+}
+
+
+/// The text of a widget on the bar now. A flashing widget changes between
+/// its text with colors and its text without colors.
+pub fn text(state: *const State) []const u8 {
+    return if (state.blink and !blink_on) state.plain.items else state.text.items;
+}
+
+
+/// Add `bytes` without the color codes `^#RRGGBBAA` and `^#!` to `list`.
+fn strip_colors(list: *std.ArrayList(u8), bytes: []const u8) !void {
+    var i: usize = 0;
+    while (i < bytes.len) {
+        if (mem.startsWith(u8, bytes[i..], "^#!")) {
+            i += 3;
+        } else if (mem.startsWith(u8, bytes[i..], "^#") and i + 10 <= bytes.len and
+            for (bytes[i + 2 .. i + 10]) |c| {
+                if (!std.ascii.isAlphanumeric(c)) break false;
+            } else true)
+        {
+            i += 10;
+        } else {
+            try list.append(ctx.gpa, bytes[i]);
+            i += 1;
+        }
+    }
+}
+
+
+// Flashing -------------------------------------------------------------------
+
+/// Milliseconds between two changes of a flashing widget.
+const blink_interval = 150;
+/// The phase of the flashing widgets: true shows their colors.
+var blink_on = true;
+var blinking = false;
+
+
+fn start_blinking() void {
+    if (blinking) return;
+    blinking = true;
+    blink_on = true;
+    ctx.run_later(.fromMilliseconds(blink_interval), blink_tick);
+}
+
+
+fn any_blinking() bool {
+    for (std.enums.values(Side)) |side| {
+        for (states(side)) |*state| {
+            if (state.blink and !state.hidden) return true;
+        }
+    }
+    return false;
+}
+
+
+fn blink_tick(_: *Context) void {
+    if (!any_blinking()) {
+        blinking = false;
+        blink_on = true;
+        return;
+    }
+    blink_on = !blink_on;
+    damage_bars();
+    ctx.run_later(.fromMilliseconds(blink_interval), blink_tick);
 }
 
 

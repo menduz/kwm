@@ -1030,7 +1030,7 @@ fn rasterize_widgets(self: *Self, side: widgets.Side, fg: pixman.Color) !WidgetR
     for (0.., widgets.states(side)) |index, state| {
         if (state.hidden or state.text.items.len == 0) continue;
 
-        var text = try self.rasterize_status(state.text.items, fg);
+        var text = try self.rasterize_status(widgets.text(&state), fg);
         errdefer text.deinit();
         if (row.texts.items.len > 0) row.width += row.gap;
         row.width += text.width;
