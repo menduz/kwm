@@ -47,7 +47,7 @@ pub fn update(cfg: anytype, out: *common.Output) !void {
     try common.append_colored(
         &out.text,
         if (alert) ctx.cfg.bar.widget_colors.critical else null,
-        try fmt.bufPrint(&buffer, "{}G free", .{ free / gb }),
+        try fmt.bufPrint(&buffer, "{}G", .{ free / gb }),
     );
 
     // As the waybar tooltip, in GB with two decimals.
