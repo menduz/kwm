@@ -30,6 +30,10 @@
 
         .font = "monospace:size=10",
 
+        // minimum height in logical pixels, 0 to use the font height
+        // the text is in the vertical center of the bar
+        .min_height = 0,
+
         .scheme = .{
             .normal = .{
                 .fg = 0x828bb8ff,

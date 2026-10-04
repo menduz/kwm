@@ -34,6 +34,10 @@ position: enum {
 
 font: []const u8,
 
+/// The minimum height of the bar, in logical pixels. When the bar is higher
+/// than the font, the text is in the vertical center.
+min_height: u32 = 0,
+
 scheme: Scheme,
 
 tags: ?struct {

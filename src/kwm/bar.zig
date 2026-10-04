@@ -107,11 +107,15 @@ pub inline fn reload_font(self: *Self) void {
 
 
 pub inline fn height(self: *const Self, logical: bool) i32 {
-    return if (logical) utils.physics2logical(
-        i32,
-        self.font.height(),
-        self.scale,
-    ) else self.font.height();
+    const min_height = utils.logical2physics(i32, @intCast(ctx.cfg.bar.min_height), self.scale);
+    const h = @max(self.font.height(), min_height);
+    return if (logical) utils.physics2logical(i32, h, self.scale) else h;
+}
+
+
+/// The top of the text. The text is in the vertical center of the bar.
+inline fn text_y(self: *const Self) i16 {
+    return @intCast(@divFloor(self.height(false) - self.font.height(), 2));
 }
 
 
@@ -360,7 +364,8 @@ fn draw_box(
     x: i16,
     y: i16,
 ) void {
-    const h: u16 = @intCast(self.height(false));
+    // The box is at the corner of the text, not of the bar.
+    const h: i32 = self.font.height();
     const box_size: u16 = @intCast(@divFloor(h, 6) + 2);
     const box_offset: i16 = @intCast(@divFloor(h, 9));
     var box = [_]pixman.Rectangle16 {
@@ -368,7 +373,7 @@ fn draw_box(
             .x = x + box_offset,
             .y = switch (pos) {
                 .top => y + 1,
-                .bottom => @intCast(h - box_size - 1),
+                .bottom => y + @as(i16, @intCast(h - box_size - 1)),
             },
             .width = box_size,
             .height = box_size,
@@ -466,7 +471,7 @@ fn render_static_component(self: *Self) void {
     _ = pixman.Image.fillRectangles(.src, buffer.image, &normal_bg, 1, &bg_rect);
 
     var x: i16 = 0;
-    const y: i16 = 0;
+    const y = self.text_y();
     for (0.., texts.items) |i, text| {
         const tag: u32 = @as(u32, @intCast(1)) << @as(u5, @intCast(i));
 
@@ -479,7 +484,7 @@ fn render_static_component(self: *Self) void {
             const tag_rect = [_]pixman.Rectangle16 {
                 .{
                     .x = x,
-                    .y = y,
+                    .y = 0,
                     .width = tag_width,
                     .height = h,
                 }
@@ -554,7 +559,7 @@ fn render_dynamic_component(self: *Self) void {
     };
 
     var x: i16 = 0;
-    const y: i16 = 0;
+    const y = self.text_y();
 
     if (ctx.cfg.bar.mode) |area| draw_mode: {
         const tag = area.tag(ctx.mode) orelse ctx.mode;
