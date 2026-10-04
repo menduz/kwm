@@ -34,6 +34,15 @@ pub const Disk = clickable(struct {
     interval: u32 = 30_000,
 });
 
+pub const Battery = clickable(struct {
+    /// The name in /sys/class/power_supply. null: the first of BAT0 to BAT9.
+    name: ?[]const u8 = null,
+    /// Percentages for the warning and critical colors on battery.
+    warning: u8 = 30,
+    critical: u8 = 15,
+    interval: u32 = 5000,
+});
+
 pub const Network = clickable(struct {
     /// The interface. null: the interface of the default route.
     interface: ?[]const u8 = null,
@@ -62,6 +71,7 @@ pub const Widget = union(enum) {
     cpu: Meter,
     clock: Clock,
     disk: Disk,
+    battery: Battery,
     network: Network,
     script: Script,
 };

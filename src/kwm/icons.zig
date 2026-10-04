@@ -514,5 +514,36 @@ fn to_image(pixels: []const u8, width: i32, height: i32, premultiplied: bool) ?*
             data[row * stride + col] = a << 24 | r << 16 | g << 8 | b;
         }
     }
+    desaturate(image);
     return image;
+}
+
+
+/// Apply `bar.tray.saturation` to an a8r8g8b8 image with premultiplied
+/// alpha: mix each pixel with its gray value. The gray value is the luma of
+/// ITU-R BT.601. A mix of two premultiplied colors stays premultiplied.
+pub fn desaturate(image: *pixman.Image) void {
+    const tray = ctx.cfg.bar.tray orelse return;
+    const saturation = std.math.clamp(tray.saturation, 0.0, 1.0);
+    if (saturation >= 1.0) return;
+
+    const data = image.getData() orelse return;
+    const width: usize = @intCast(image.getWidth());
+    const height: usize = @intCast(image.getHeight());
+    const stride: usize = @intCast(@divExact(image.getStride(), 4));
+    for (0..height) |row| {
+        for (data[row * stride ..][0..width]) |*pixel| {
+            const a = pixel.* >> 24;
+            const r: f32 = @floatFromInt(pixel.* >> 16 & 0xff);
+            const g: f32 = @floatFromInt(pixel.* >> 8 & 0xff);
+            const b: f32 = @floatFromInt(pixel.* & 0xff);
+            const gray = 0.299 * r + 0.587 * g + 0.114 * b;
+            const mix = struct {
+                fn f(c: f32, y: f32, s: f32) u32 {
+                    return @intFromFloat(@round(y + s * (c - y)));
+                }
+            }.f;
+            pixel.* = a << 24 | mix(r, gray, saturation) << 16 | mix(g, gray, saturation) << 8 | mix(b, gray, saturation);
+        }
+    }
 }

@@ -141,6 +141,8 @@
         // .right = .{
         //     // shown at 80% used, in the critical color below 10 GB free
         //     .{ .disk = .{ .path = "/", .show = 80, .alert = 10000000000 } },
+        //     // shown on battery and while charging, % below 100%
+        //     .{ .battery = .{ .warning = 30, .critical = 15 } },
         //     // waybar custom module: JSON lines with "text", "tooltip" and "class"
         //     .{ .script = .{ .exec = "notifications.sh", .interval = 5000, .return_type = .json } },
         // },
@@ -160,6 +162,8 @@
         //     .spacing = 4,
         //     .icon_theme = "hicolor",
         //     .show_passive = false,
+        //     // color saturation of the icons: 1 colored, 0 grayscale, 0.1 = 90% gray and 10% color
+        //     .saturation = 1.0,
         //     // the menus of the items: rows on stdin, the index of the chosen row on stdout
         //     // {title}: name of the item, {x} {y} {right}: place of the icon on its output
         //     .menu_command = .{ "rofi", "-dmenu", "-i", "-no-custom", "-format", "i", "-p", "{title}" },

@@ -18,6 +18,7 @@ const common = @import("widgets/common.zig");
 const clock = @import("widgets/clock.zig");
 const cpu = @import("widgets/cpu.zig");
 const disk = @import("widgets/disk.zig");
+const battery = @import("widgets/battery.zig");
 const mem_widget = @import("widgets/mem.zig");
 const net = @import("widgets/net.zig");
 const script = @import("widgets/script.zig");
@@ -159,6 +160,7 @@ fn update(item: *const Widget, state: *State, now: i64) bool {
         .cpu => |*cfg| cpu.update(cfg, &state.cpu, &out),
         .clock => |*cfg| clock.update(cfg, &out),
         .disk => |*cfg| disk.update(cfg, &out),
+        .battery => |*cfg| battery.update(cfg, &out),
         .network => |*cfg| net.update(cfg, &state.net, &out),
         .script => unreachable,
     }) catch |err| {

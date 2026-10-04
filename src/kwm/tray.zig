@@ -226,6 +226,7 @@ fn to_image(pixmap: *const Pixmap) ?*pixman.Image {
             data[row * stride + col] = a << 24 | r << 16 | g << 8 | b;
         }
     }
+    icons.desaturate(image);
     return image;
 }
 
@@ -300,8 +301,9 @@ pub fn deinit() void {
 
 /// Start or stop the tray after a change of the configuration.
 pub fn reload() void {
-    // The icon theme can change.
+    // The icon theme and the saturation can change.
     icons.reset();
+    for (items.items) |item| item.drop_image();
     if (ctx.cfg.bar.tray == null) deinit() else init();
     changed();
 }

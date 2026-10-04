@@ -125,6 +125,9 @@ tray: ?struct {
     icon_theme: []const u8 = "hicolor",
     /// Show the items with the status "Passive".
     show_passive: bool = false,
+    /// The color saturation of the icons. 1: the colors of the icon.
+    /// 0: grayscale. 0.1: 90% grayscale and 10% color.
+    saturation: f32 = 1.0,
     /// The program of the menus of the items. kwm writes one row for each
     /// menu item to its standard input, with the row options of rofi, and
     /// reads the index of the chosen row from its standard output. kwm
