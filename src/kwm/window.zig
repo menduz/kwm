@@ -633,8 +633,11 @@ pub fn handle_events(self: *Self) void {
 
                 self.apply_rules();
 
+                // The decoration of a window rule comes first. A client that
+                // does not use xdg-decoration (for example GTK4) gives
+                // only_supports_csd, but it can draw no decorations at all.
                 switch (self.decoration_hint) {
-                    .only_supports_csd => self.decoration = .csd,
+                    .only_supports_csd => self.decoration = self.decoration orelse .csd,
                     .prefers_csd => self.decoration = self.decoration orelse .csd,
                     .prefers_ssd => self.decoration = self.decoration orelse .ssd,
                     else => {}
