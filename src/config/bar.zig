@@ -114,6 +114,19 @@ widget_colors: struct {
 /// Milliseconds that the pointer stays on a widget before its tooltip shows.
 tooltip_delay: u32 = 500,
 
+/// The system tray (StatusNotifierItem), at the right end of the bar. null:
+/// no tray. kwm must be built with -Dtray=true.
+tray: ?struct {
+    /// The icon size in logical pixels. 0: the height of the bar.
+    icon_size: u32 = 0,
+    /// Logical pixels between two icons.
+    spacing: u32 = 4,
+    /// The icon theme for the icon names of the items.
+    icon_theme: []const u8 = "hicolor",
+    /// Show the items with the status "Passive".
+    show_passive: bool = false,
+} = null,
+
 override_colors: []const struct {
     area: BarArea,
     scheme: meta.make_fields_optional(Scheme),

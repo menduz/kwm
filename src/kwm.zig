@@ -14,6 +14,7 @@ const binding = @import("kwm/binding.zig");
 const Window = @import("kwm/window.zig");
 const Context = @import("kwm/context.zig");
 const widgets = @import("kwm/widgets.zig");
+const tray = @import("kwm/tray.zig");
 
 const FDType = enum {
     wayland,
@@ -21,6 +22,7 @@ const FDType = enum {
     bar_status,
     key_repeat,
     widget_script,
+    tray,
 };
 
 pub const Layout = @import("kwm/layout.zig");
@@ -94,18 +96,40 @@ pub fn run(wl_display: *wl.Display) !void {
         }
 
         ctx.run_timer_tasks();
+
+        // The session bus of the tray. A timeout of sd-bus that is due, for
+        // example of a call without reply, runs now.
+        var tray_timeout: ?i64 = null;
+        if (comptime build_options.tray_enabled) {
+            tray_timeout = tray.timeout();
+            if (tray_timeout == 0) {
+                tray.dispatch();
+                tray_timeout = tray.timeout();
+            }
+            if (tray.poll_fd()) |fd| {
+                try poll_fds.appendBounded(fd);
+                try fd_types.appendBounded(.tray);
+            }
+        }
+
         _ = wl_display.flush();
 
-        const timeout =
+        var timeout =
             if (ctx.timer_tasks.peek()) |*task|
                 task.time.toMilliseconds() - Io.Timestamp.now(ctx.io, .awake).toMilliseconds()
             else -1;
+        if (tray_timeout) |t| timeout = if (timeout < 0) t else @min(timeout, t);
         log.debug("poll timeout: {}", .{ timeout });
         _ = try posix.poll(poll_fds.items, @intCast(timeout));
 
         for (fd_types.items, poll_fds.items) |fd_type, poll_fd| {
             // A script that stops gives POLL.HUP. Read to the end of the pipe.
-            const events: i16 = if (fd_type == .widget_script) posix.POLL.IN | posix.POLL.HUP else posix.POLL.IN;
+            // sd-bus reads and writes the bus, and finds the errors.
+            const events: i16 = switch (fd_type) {
+                .widget_script => posix.POLL.IN | posix.POLL.HUP,
+                .tray => poll_fd.events | posix.POLL.HUP | posix.POLL.ERR,
+                else => posix.POLL.IN,
+            };
             if (poll_fd.revents & events != 0) {
                 switch (fd_type) {
                     .wayland => if (wl_display.dispatch() != .SUCCESS) return error.DispatchFailed,
@@ -119,6 +143,7 @@ pub fn run(wl_display: *wl.Display) !void {
                         ctx.key_repeat.?.repeat(count);
                     },
                     .widget_script => if (comptime build_options.bar_enabled) widgets.handle_script_fd(poll_fd.fd),
+                    .tray => if (comptime build_options.tray_enabled) tray.dispatch(),
                 }
             }
         }

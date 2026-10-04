@@ -175,6 +175,9 @@ pub fn init(
     if (comptime build_options.bar_enabled) {
         @import("widgets.zig").init();
     }
+    if (comptime build_options.tray_enabled) {
+        if (ctx.cfg.bar.tray != null) @import("tray.zig").init();
+    }
 
     rwm.setListener(*Self, rwm_listener, &ctx);
     if (comptime build_options.kwim_enabled) {
@@ -201,6 +204,9 @@ pub fn deinit() void {
 
     log.info("deinit context", .{});
 
+    if (comptime build_options.tray_enabled) {
+        @import("tray.zig").deinit();
+    }
     if (comptime build_options.bar_enabled) {
         @import("tooltip.zig").deinit();
         @import("widgets.zig").deinit();
@@ -379,6 +385,7 @@ pub fn reload_config(self: *Self) void {
             self.stop_listening_status();
             @import("tooltip.zig").hover(null);
             @import("widgets.zig").reload();
+            if (comptime build_options.tray_enabled) @import("tray.zig").reload();
 
             var it = self.outputs.safeIterator(.forward);
             while (it.next()) |output| {

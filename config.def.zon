@@ -153,6 +153,16 @@
         // milliseconds before the tooltip of a widget shows
         .tooltip_delay = 500,
 
+        // the system tray (StatusNotifierItem), kwm must be built with -Dtray=true
+        // e.g.
+        // .tray = .{
+        //     .icon_size = 0, // 0: the height of the bar
+        //     .spacing = 4,
+        //     .icon_theme = "hicolor",
+        //     .show_passive = false,
+        // },
+        .tray = null,
+
         // override colors
         .override_colors = .{
             // areas:

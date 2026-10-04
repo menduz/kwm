@@ -60,6 +60,8 @@ pub fn build(b: *std.Build) void {
     const default_config_path = b.option([]const u8, "config", "path to config file") orelse "config.zon";
     const background_enabled = b.option(bool, "background", "if enable background") orelse false;
     const bar_enabled = b.option(bool, "bar", "if enable bar") orelse true;
+    // The tray is in the bar, and it links libsystemd for sd-bus.
+    const tray_enabled = bar_enabled and (b.option(bool, "tray", "if enable the system tray (needs libsystemd)") orelse false);
     const kwim_enabled = b.option(bool, "kwim", "if to call `kwim` automatically") orelse true;
 
     const scanner = wayland.Scanner.create(b, .{});
@@ -255,10 +257,14 @@ pub fn build(b: *std.Build) void {
         exe.root_module.linkSystemLibrary("pixman-1", .{});
         exe.root_module.linkSystemLibrary("fcft", .{});
     }
+    if (tray_enabled) {
+        exe.root_module.linkSystemLibrary("libsystemd", .{});
+    }
 
     const kwm_options = b.addOptions();
     kwm_options.addOption(bool, "background_enabled", background_enabled);
     kwm_options.addOption(bool, "bar_enabled", bar_enabled);
+    kwm_options.addOption(bool, "tray_enabled", tray_enabled);
     kwm_options.addOption(bool, "kwim_enabled", kwim_enabled);
     kwm_mod.addOptions("build_options", kwm_options);
 
