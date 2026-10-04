@@ -74,6 +74,7 @@ has_pointer_interaction: bool = false,
 /// The surface of kwm under the pointer, from wl_pointer, for the widgets.
 pointer_surface: ?*wl.Surface = null,
 pointer_surface_x: i32 = 0,
+pointer_surface_y: i32 = 0,
 unhandled_actions: std.ArrayList(binding.Action) = undefined,
 xkb_bindings: std.StringHashMap(std.ArrayList(*binding.XkbBinding)) = undefined,
 pointer_bindings: std.StringHashMap(std.ArrayList(*binding.PointerBinding)) = undefined,
@@ -1144,10 +1145,12 @@ fn wl_pointer_listener(wl_pointer: *wl.Pointer, event: wl.Pointer.Event, seat: *
 
             seat.pointer_surface = data.surface;
             seat.pointer_surface_x = data.surface_x.toInt();
+            seat.pointer_surface_y = data.surface_y.toInt();
             seat.hover_widget();
         },
         .motion => |data| {
             seat.pointer_surface_x = data.surface_x.toInt();
+            seat.pointer_surface_y = data.surface_y.toInt();
             seat.hover_widget();
         },
         .leave => {
@@ -1158,7 +1161,10 @@ fn wl_pointer_listener(wl_pointer: *wl.Pointer, event: wl.Pointer.Event, seat: *
             if (data.axis != .vertical_scroll) return;
             if (comptime build_options.bar_enabled) {
                 const target = seat.widget_under_pointer() orelse return;
-                widgets.scroll(target.side, target.index, data.value.toDouble());
+                switch (target.area) {
+                    .widget => |w| widgets.scroll(w.side, w.index, data.value.toDouble()),
+                    .layout => {},
+                }
             }
         },
         else => {}
@@ -1170,7 +1176,7 @@ fn widget_under_pointer(self: *const Self) ?tooltip.Target {
     const surface = self.pointer_surface orelse return null;
     var it = ctx.outputs.safeIterator(.forward);
     while (it.next()) |output| {
-        if (output.bar.widget_at(surface, self.pointer_surface_x)) |target| return target;
+        if (output.bar.widget_at(surface, self.pointer_surface_x, self.pointer_surface_y)) |target| return target;
     }
     return null;
 }

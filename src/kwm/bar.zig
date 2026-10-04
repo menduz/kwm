@@ -195,18 +195,35 @@ fn widget_index_at(self: *const Self, x: i32) ?WidgetRect {
 }
 
 
-/// The widget under a pointer at `surface_x` on `surface`, for the tooltip
-/// and for scroll events.
-pub fn widget_at(self: *Self, surface: *wl.Surface, surface_x: i32) ?tooltip.Target {
+/// The widget or the layout area under a pointer at (`surface_x`,
+/// `surface_y`) on `surface`, for the tooltip and for scroll events.
+pub fn widget_at(self: *Self, surface: *wl.Surface, surface_x: i32, surface_y: i32) ?tooltip.Target {
     if (self.hidden or surface != self.dynamic_component.wl_surface) return null;
 
     const x = utils.logical2physics(i32, surface_x, self.scale);
-    const rect = self.widget_index_at(x) orelse return null;
+    // The layout area is between the first two splits: the end of the mode
+    // area and the end of the layout area.
+    const area: tooltip.Area, const x0: i32 = blk: {
+        if (self.widget_index_at(x)) |rect| {
+            break :blk .{ .{ .widget = .{ .side = rect.side, .index = rect.index } }, rect.x0 };
+        }
+        const splits = self.dynamic_splits.items;
+        if (ctx.cfg.bar.layout != null and splits.len >= 2 and x >= splits[0] and x < splits[1]) {
+            break :blk .{ .layout, splits[0] };
+        }
+        return null;
+    };
+    const surface_left = self.output.x + utils.physics2logical(i32, self.static_component_width(), self.scale);
+    const surface_top = self.output.y + switch (ctx.cfg.bar.position) {
+        .top => 0,
+        .bottom => self.output.height - self.height(true),
+    };
     return .{
         .bar = self,
-        .side = rect.side,
-        .index = rect.index,
-        .x = self.output.x + utils.physics2logical(i32, self.static_component_width() + rect.x0, self.scale),
+        .area = area,
+        .x = self.output.x + utils.physics2logical(i32, self.static_component_width() + x0, self.scale),
+        .pointer_x = surface_left + surface_x,
+        .pointer_y = surface_top + surface_y,
     };
 }
 
@@ -229,6 +246,12 @@ pub fn toggle(self: *Self) void {
 
 pub fn damage(self: *Self, @"type": enum { all, tags, dynamic, layout, mode, title, status }) void {
     log.debug("<{*}> damage {s}", .{ self, @tagName(@"type") });
+
+    // The tooltip of the layout area shows the current layout.
+    switch (@"type") {
+        .all, .tags, .layout => tooltip.damage(),
+        else => {},
+    }
 
     switch (@"type") {
         .all => {
@@ -430,6 +453,7 @@ fn render_static_component(self: *Self) void {
     const select_bg = render_.utils.color(scheme.select.bg);
     const normal_fg = render_.utils.color(scheme.normal.fg);
     const normal_bg = render_.utils.color(scheme.normal.bg);
+    const empty_fg = if (area.empty_fg) |fg| render_.utils.color(fg) else null;
 
     const bg_rect = [_]pixman.Rectangle16 {
         .{
@@ -491,10 +515,13 @@ fn render_static_component(self: *Self) void {
             }
         }
 
+        const fg = if (empty_fg != null and windows_tag & tag == 0) &empty_fg.?
+            else if (is_focused) &select_fg
+            else &normal_fg;
         _ = self.font.render_text(
             buffer,
             text,
-            if (is_focused) &select_fg else &normal_fg,
+            fg,
             x+@as(i16, @intCast(@divFloor(pad, 2))),
             y,
         );

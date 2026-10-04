@@ -82,10 +82,13 @@ pub fn render_text(
     for (0..text.count) |i| {
         const glyph = text.glyphs[i];
         offset += @intCast(glyph.x);
+        // A color glyph, for example an emoji, has its own colors. Blend it.
+        // Other glyphs are a mask for the color `c`.
+        const color_glyph = glyph.pix.getFormat() == .a8r8g8b8;
         pixman.Image.composite32(
             .over,
-            image,
-            glyph.pix,
+            if (color_glyph) glyph.pix else image,
+            if (color_glyph) null else glyph.pix,
             buffer.image,
             0,
             0,

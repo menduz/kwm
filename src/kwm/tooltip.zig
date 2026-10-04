@@ -1,4 +1,5 @@
-//! The tooltip of the bar widgets. There is one tooltip for all outputs.
+//! The tooltip of the bar widgets and of the layout area. There is one tooltip
+//! for all outputs.
 //!
 //! The pointer events of the bar select the target widget. After
 //! `bar.tooltip_delay` milliseconds, the next render sequence makes a shell
@@ -21,15 +22,28 @@ const widgets = @import("widgets.zig");
 const Context = @import("context.zig");
 const ShellSurface = @import("shell_surface.zig");
 const Bar = @import("bar.zig");
+const Output = @import("output.zig");
+const Layout = @import("layout.zig");
 
 const ctx = Context.get();
 
+pub const Area = union(enum) {
+    widget: struct {
+        side: widgets.Side,
+        index: usize,
+    },
+    /// The tooltip shows all layouts.
+    layout,
+};
+
 pub const Target = struct {
     bar: *Bar,
-    side: widgets.Side,
-    index: usize,
-    /// The left edge of the widget, in logical coordinates of the output.
+    area: Area,
+    /// The left edge of the area, in logical coordinates of the output.
     x: i32,
+    /// The pointer position, in logical coordinates of the output.
+    pointer_x: i32,
+    pointer_y: i32,
 };
 
 const Surface = struct {
@@ -88,14 +102,19 @@ var shown_generation: u64 = 0;
 
 fn same(a: ?Target, b: ?Target) bool {
     if (a == null or b == null) return a == null and b == null;
-    return a.?.bar == b.?.bar and a.?.side == b.?.side and a.?.index == b.?.index;
+    return a.?.bar == b.?.bar and std.meta.eql(a.?.area, b.?.area);
 }
 
 
 /// The pointer is on this widget now, or on no widget.
 pub fn hover(new: ?Target) void {
-    if (same(target, new)) return;
-    log.debug("hover {?}", .{ if (new) |t| t.index else null });
+    if (same(target, new)) {
+        // Keep the newest pointer position until the tooltip shows. Then the
+        // tooltip does not move.
+        if (!visible) target = new;
+        return;
+    }
+    log.debug("hover {?}", .{ if (new) |t| std.meta.activeTag(t.area) else null });
 
     target = new;
     generation += 1;
@@ -118,7 +137,7 @@ fn show_later(_: *Context) void {
 }
 
 
-/// The text of a widget changed.
+/// The text of a widget changed, or the layout changed.
 pub fn damage() void {
     if (visible) dirty = true;
 }
@@ -145,10 +164,16 @@ pub fn render() void {
     const t = target orelse return hide();
     if (!visible) return hide();
 
-    const states = widgets.states(t.side);
-    if (t.index >= states.len) return hide();
-    const text = states[t.index].tooltip.items;
-    if (text.len == 0 or states[t.index].hidden) return hide();
+    var layout_buffer: [256]u8 = undefined;
+    const text = switch (t.area) {
+        .widget => |w| blk: {
+            const states = widgets.states(w.side);
+            if (w.index >= states.len or states[w.index].hidden) return hide();
+            break :blk states[w.index].tooltip.items;
+        },
+        .layout => layout_list(t.bar.output, &layout_buffer),
+    };
+    if (text.len == 0) return hide();
 
     if (surface == null) {
         surface = Surface.create() catch |err| {
@@ -167,6 +192,25 @@ pub fn deinit() void {
     target = null;
     visible = false;
     hide();
+}
+
+
+/// The layouts in the order of cycle_layout. ">> <<" is around the current
+/// layout.
+fn layout_list(output: *Output, buffer: []u8) []const u8 {
+    const current = std.meta.activeTag(output.current_layout());
+    var len: usize = 0;
+    for (std.enums.values(Layout.Type), 0..) |layout, i| {
+        const selected = layout == current;
+        const line = std.fmt.bufPrint(buffer[len..], "{s}{s}{s}{s}", .{
+            if (i == 0) "" else "\n",
+            if (selected) ">> " else "   ",
+            @tagName(layout),
+            if (selected) " <<" else "",
+        }) catch break;
+        len += line.len;
+    }
+    return buffer[0..len];
 }
 
 
@@ -226,22 +270,43 @@ fn draw(s: *Surface, t: *const Target, text: []const u8) !void {
         y += line_height;
     }
 
-    // Below a bar at the top, and above a bar at the bottom.
+    // Below a bar at the top, and above a bar at the bottom. The tooltip is
+    // at the right of the cursor, thus the cursor does not cover it.
     const output = bar.output;
+    const right = output.x + output.width;
     const logical_w = utils.physics2logical(i32, w, bar.scale);
     const logical_h = utils.physics2logical(i32, h, bar.scale);
-    const x = @min(t.x, output.x + output.width - logical_w);
-    const pos_y = switch (ctx.cfg.bar.position) {
+    const cursor = cursor_size();
+    var x = t.pointer_x + cursor;
+    var pos_y = switch (ctx.cfg.bar.position) {
         .top => output.y + bar.height(true),
         .bottom => output.y + output.height - bar.height(true) - logical_h,
     };
+    if (x + logical_w > right) {
+        // No space at the right of the cursor. Put the tooltip below the
+        // cursor. Above a bar at the bottom, the cursor does not cover the
+        // tooltip, because the cursor goes down from the pointer.
+        x = @max(@min(t.x, right - logical_w), output.x);
+        if (ctx.cfg.bar.position == .top) pos_y = @max(pos_y, t.pointer_y + cursor);
+    }
 
     s.shell_surface.sync_next_commit();
     s.shell_surface.place(.top);
-    s.shell_surface.set_position(@max(x, output.x), pos_y);
+    s.shell_surface.set_position(x, pos_y);
 
     s.wl_surface.attach(buffer.wl_buffer, 0, 0);
     s.wl_surface.damageBuffer(0, 0, w, h);
     s.wp_viewport.setDestination(logical_w, logical_h);
     s.wl_surface.commit();
+}
+
+
+/// The size of the cursor, in logical pixels. river uses the size of the
+/// xcursor theme, or XCURSOR_SIZE, or 24.
+fn cursor_size() i32 {
+    if (ctx.cfg.xcursor_theme) |theme| return @intCast(theme.size);
+    if (ctx.env.get("XCURSOR_SIZE")) |size| {
+        return std.fmt.parseInt(i32, size, 10) catch 24;
+    }
+    return 24;
 }
