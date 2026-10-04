@@ -3,6 +3,10 @@
 //! then the pixmaps directories. When a name is not found, the search
 //! continues with the name without its last "-part", as GTK does.
 //!
+//! For each name, the symbolic icon ("name-symbolic") comes first. A
+//! symbolic icon is drawn in the color of the text, as GTK does: its shape
+//! and its alpha stay, and its colors change.
+//!
 //! libspng reads the PNG files, and resvg draws the SVG files at the
 //! requested size. The images and the themes stay in a cache until `reset`.
 
@@ -74,15 +78,16 @@ const max_images = 256;
 
 /// The icon with this name for a square of `size` physical pixels. The
 /// image can be larger or smaller than `size`. `theme_path` is the
-/// IconThemePath of the item, or "". The cache keeps the image.
-pub fn get(name: []const u8, theme_path: []const u8, size: i32) ?*pixman.Image {
+/// IconThemePath of the item, or "". A symbolic icon has the color `color`
+/// (0xRRGGBBAA). The cache keeps the image.
+pub fn get(name: []const u8, theme_path: []const u8, size: i32, color: u32) ?*pixman.Image {
     if (name.len == 0 or size <= 0) return null;
 
     var key_buffer: [1024]u8 = undefined;
-    const key = std.fmt.bufPrint(&key_buffer, "{}/{s}/{s}", .{ size, theme_path, name }) catch return null;
+    const key = std.fmt.bufPrint(&key_buffer, "{}/{x:0>8}/{s}/{s}", .{ size, color, theme_path, name }) catch return null;
     if (images.get(key)) |image| return image;
 
-    const image = find(name, theme_path, size);
+    const image = find(name, theme_path, size, color);
     if (images.count() >= max_images) clear_images();
     const owned_key = ctx.gpa.dupe(u8, key) catch return image;
     images.put(ctx.gpa, owned_key, image) catch {
@@ -125,24 +130,64 @@ fn allocator() mem.Allocator {
 
 
 /// Find the file of the icon, and read it.
-fn find(name: []const u8, theme_path: []const u8, size: i32) ?*pixman.Image {
+fn find(name: []const u8, theme_path: []const u8, size: i32, color: u32) ?*pixman.Image {
     const theme_name = if (ctx.cfg.bar.tray) |cfg| cfg.icon_theme else "hicolor";
     var path_buffer: [max_path]u8 = undefined;
+    var symbolic_buffer: [256]u8 = undefined;
 
     // An absolute path is a file.
-    if (mem.startsWith(u8, name, "/")) return read(name, size);
+    if (mem.startsWith(u8, name, "/")) return load(name, name, size, color);
 
     var variant = name;
     while (true) {
+        if (!mem.endsWith(u8, variant, symbolic_suffix)) {
+            if (std.fmt.bufPrint(&symbolic_buffer, "{s}" ++ symbolic_suffix, .{ variant })) |symbolic| {
+                if (find_file(&path_buffer, symbolic, theme_path, theme_name, size)) |path| {
+                    return load(name, path, size, color);
+                }
+            } else |_| {}
+        }
         if (find_file(&path_buffer, variant, theme_path, theme_name, size)) |path| {
-            log.debug("{s} ({}): {s}", .{ name, size, path });
-            return read(path, size);
+            return load(name, path, size, color);
         }
         const dash = mem.lastIndexOfScalar(u8, variant, '-') orelse break;
         variant = variant[0..dash];
     }
     log.debug("{s} ({}): not found", .{ name, size });
     return null;
+}
+
+
+const symbolic_suffix = "-symbolic";
+
+
+/// Read the file of the icon `name`. A symbolic file gets the color `color`.
+fn load(name: []const u8, path: []const u8, size: i32, color: u32) ?*pixman.Image {
+    log.debug("{s} ({}): {s}", .{ name, size, path });
+    const image = read(path, size) orelse return null;
+    const file_name = path[if (mem.lastIndexOfScalar(u8, path, '/')) |i| i + 1 else 0 ..];
+    if (mem.indexOf(u8, file_name, symbolic_suffix) != null) recolor(image, color);
+    return image;
+}
+
+
+/// Draw the image in `color` (0xRRGGBBAA). The alpha of each pixel stays.
+fn recolor(image: *pixman.Image, color: u32) void {
+    const data = image.getData() orelse return;
+    const w: usize = @intCast(image.getWidth());
+    const h: usize = @intCast(image.getHeight());
+    const stride: usize = @intCast(@divExact(image.getStride(), 4));
+    const r = color >> 24 & 0xff;
+    const g = color >> 16 & 0xff;
+    const b = color >> 8 & 0xff;
+    const color_a = color & 0xff;
+    for (0..h) |row| {
+        for (0..w) |col| {
+            const p = &data[row * stride + col];
+            const a = (p.* >> 24) * color_a / 255;
+            p.* = a << 24 | (r * a / 255) << 16 | (g * a / 255) << 8 | b * a / 255;
+        }
+    }
 }
 
 

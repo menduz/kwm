@@ -129,15 +129,16 @@ pub const Item = struct {
 
     /// The icon of the item for a square of `size` physical pixels: the
     /// icon name in the icon theme, else the pixmap. With the status
-    /// NeedsAttention, the attention icon comes first.
-    pub fn icon(self: *Item, size: i32) ?*pixman.Image {
+    /// NeedsAttention, the attention icon comes first. A symbolic icon has
+    /// the color `color` (0xRRGGBBAA).
+    pub fn icon(self: *Item, size: i32, color: u32) ?*pixman.Image {
         const props = &self.props;
         const attention = props.status == .needs_attention;
         if (attention and props.attention_icon_name.len > 0) {
-            if (icons.get(props.attention_icon_name, props.icon_theme_path, size)) |image| return image;
+            if (icons.get(props.attention_icon_name, props.icon_theme_path, size, color)) |image| return image;
         }
         if (!attention or props.attention_icon_pixmap.len == 0) {
-            if (icons.get(props.icon_name, props.icon_theme_path, size)) |image| return image;
+            if (icons.get(props.icon_name, props.icon_theme_path, size, color)) |image| return image;
         }
         return self.pixmap_image(size);
     }

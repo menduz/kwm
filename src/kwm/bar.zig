@@ -795,7 +795,7 @@ fn render_dynamic_component(self: *Self) void {
         var item_x: i32 = @as(i32, tray_x) + @divFloor(pad, 2);
         const item_y: i32 = @divFloor(bar_h - size, 2);
         for (shown) |item| {
-            self.draw_tray_item(buffer, item, item_x, item_y, size, &status_fg);
+            self.draw_tray_item(buffer, item, item_x, item_y, size, &status_fg, status_scheme.fg);
             self.tray_rects.appendBounded(.{
                 .item = item,
                 .x0 = item_x - @divFloor(gap, 2),
@@ -879,7 +879,8 @@ fn render_dynamic_component(self: *Self) void {
 
 
 /// Draw a tray item in the square of `size` at (`x`, `y`): its icon, or the
-/// first letter of its name.
+/// first letter of its name. `fg` is the color of the text, and `fg_rgba`
+/// the same color for the symbolic icons.
 fn draw_tray_item(
     self: *Self,
     buffer: *render_.Buffer,
@@ -888,8 +889,9 @@ fn draw_tray_item(
     y: i32,
     size: i32,
     fg: *const pixman.Color,
+    fg_rgba: u32,
 ) void {
-    if (item.icon(size)) |image| {
+    if (item.icon(size, fg_rgba)) |image| {
         draw_image(buffer, image, x, y, size);
         return;
     }
