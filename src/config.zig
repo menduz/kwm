@@ -45,6 +45,10 @@ pub const Config = struct {
 
     sloppy_focus: bool,
 
+    /// No gap at the edges of the output when one tiled window fills it, and
+    /// no gap in the monocle layout.
+    smart_gaps: bool,
+
     cursor_warp: enum {
         none,
         on_output_changed,

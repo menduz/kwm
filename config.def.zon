@@ -191,6 +191,10 @@
 
     .sloppy_focus = false,
 
+    // no gap at the edges of the output when one tiled window fills it,
+    // and no gap in the monocle layout
+    .smart_gaps = false,
+
     // .none
     // .on_focus_changed: warp cursor to the center of window focused
     // .on_output_changed: warp cursor to the center of output focused

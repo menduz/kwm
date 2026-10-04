@@ -8,6 +8,7 @@ const config = @import("config");
 const types = @import("../types.zig");
 const Context = @import("../context.zig");
 const Output = @import("../output.zig");
+const Layout = @import("../layout.zig");
 const Window = @import("../window.zig");
 
 pub const Direction = enum {
@@ -43,10 +44,11 @@ pub fn arrange(self: *const Self, output: *Output) !void {
     }
 
     if (windows.items.len == 0) return;
+    const outer_gap = Layout.outer_gap(self.outer_gap, windows.items.len);
 
     const usable_width, const usable_height = blk: {
-        const width = @max(0, output.exclusive_width() - 2*self.outer_gap);
-        const height = @max(0, output.exclusive_height() - 2*self.outer_gap);
+        const width = @max(0, output.exclusive_width() - 2*outer_gap);
+        const height = @max(0, output.exclusive_height() - 2*outer_gap);
         break :blk switch (self.direction) {
             .horizontal => .{ width, height },
             .vertical => .{ height, width },
@@ -127,11 +129,11 @@ pub fn arrange(self: *const Self, output: *Output) !void {
 
         switch (self.direction) {
             .horizontal => {
-                window.unbound_move(x + self.outer_gap, y + self.outer_gap);
+                window.unbound_move(x + outer_gap, y + outer_gap);
                 window.unbound_resize(w, h);
             },
             .vertical => {
-                window.unbound_move(y + self.outer_gap, x + self.outer_gap);
+                window.unbound_move(y + outer_gap, x + outer_gap);
                 window.unbound_resize(h, w);
             },
         }

@@ -9,6 +9,7 @@ const types = @import("../types.zig");
 const utils = @import("../utils.zig");
 const Context = @import("../context.zig");
 const Output = @import("../output.zig");
+const Layout = @import("../layout.zig");
 const Window = @import("../window.zig");
 
 pub const MasterLocation = types.LayoutMasterLocation;
@@ -40,10 +41,11 @@ pub fn arrange(self: *const Self, output: *Output) !void {
     }
 
     if (windows.items.len == 0) return;
+    const outer_gap = Layout.outer_gap(self.outer_gap, windows.items.len);
 
     const usable_width, const usable_height = blk: {
-        const width = @max(0, output.exclusive_width() - 2*self.outer_gap);
-        const height = @max(0, output.exclusive_height() - 2*self.outer_gap);
+        const width = @max(0, output.exclusive_width() - 2*outer_gap);
+        const height = @max(0, output.exclusive_height() - 2*outer_gap);
         break :blk switch (self.master_location) {
             .left, .right => .{ width, height },
             .top, .bottom => .{ height, width },
@@ -95,19 +97,19 @@ pub fn arrange(self: *const Self, output: *Output) !void {
 
         switch (self.master_location) {
             .left => {
-                window.unbound_move(x+self.outer_gap, y+self.outer_gap);
+                window.unbound_move(x+outer_gap, y+outer_gap);
                 window.unbound_resize(w, h);
             },
             .right => {
-                window.unbound_move(usable_width-x-w+self.outer_gap, y+self.outer_gap);
+                window.unbound_move(usable_width-x-w+outer_gap, y+outer_gap);
                 window.unbound_resize(w, h);
             },
             .top => {
-                window.unbound_move(y+self.outer_gap, x+self.outer_gap);
+                window.unbound_move(y+outer_gap, x+outer_gap);
                 window.unbound_resize(h, w);
             },
             .bottom => {
-                window.unbound_move(y+self.outer_gap, usable_width-x-w+self.outer_gap);
+                window.unbound_move(y+outer_gap, usable_width-x-w+outer_gap);
                 window.unbound_resize(h, w);
             }
         }
