@@ -2,10 +2,12 @@
 //! such as rofi. There is one menu at a time.
 //!
 //! kwm gets the layout of the menu, and writes one row for each menu item
-//! to the standard input of `bar.tray.menu_command`. A submenu gives rows
-//! such as "Parent › Child". The rows have the row options of rofi: icon,
-//! nonselectable and active. The program writes the index of the chosen row
-//! to its standard output, and kwm sends the event "clicked" for that item.
+//! to the standard input of `bar.tray.menu_command`. A submenu is a row that
+//! cannot be chosen, with its items indented below it. The rows have the row
+//! options of rofi: icon, nonselectable, active, and meta with the names of
+//! the submenus, so that a search for a submenu also finds its items. The
+//! program writes the index of the chosen row to its standard output, and
+//! kwm sends the event "clicked" for that item.
 
 const std = @import("std");
 const mem = std.mem;
@@ -67,12 +69,16 @@ const Menu = struct {
     /// The layout was read again after AboutToShow of the empty submenus.
     refreshed: bool = false,
     root: Node = .{ .id = 0 },
-    /// The id of the menu item of each row.
+    /// The id of the menu item of each row. A submenu row has `no_id`.
     row_ids: std.ArrayList(i32) = .empty,
     process: ?Process = null,
 };
 
 var menu: ?*Menu = null;
+
+const no_id = -1;
+/// The indentation of the items of a submenu, for each level.
+const indent = "    ";
 
 
 /// Show the menu at `path` of the item at `service`.
@@ -136,7 +142,7 @@ pub fn handle_fd() void {
     // The program stopped.
     const text = mem.trim(u8, process.output.items, " \t\r\n");
     if (std.fmt.parseInt(usize, text, 10)) |row| {
-        if (row < m.row_ids.items.len) {
+        if (row < m.row_ids.items.len and m.row_ids.items[row] != no_id) {
             const id = m.row_ids.items[row];
             log.debug("{s}: clicked {}", .{ m.service, id });
             send_event(m, id, "clicked");
@@ -336,40 +342,47 @@ fn read_node(msg: *sd.Message, a: mem.Allocator) !Node {
 
 // The rows.
 
-/// Write the rows of the children of `node`, with `prefix` before the
-/// labels.
-fn write_rows(m: *Menu, w: *std.Io.Writer, node: *const Node, prefix: []const u8) !void {
+/// Write the rows of the children of `node`. `depth` is the number of
+/// submenus above the children, and `parents` has their names.
+fn write_rows(m: *Menu, w: *std.Io.Writer, node: *const Node, depth: usize, parents: []const u8) !void {
     const a = m.arena.allocator();
     for (node.children) |*child| {
         if (!child.visible or child.separator) continue;
+        if (child.submenu and child.children.len == 0) continue;
         const label = try strip_mnemonics(a, child.label);
-        if (child.submenu) {
-            if (child.children.len == 0) continue;
-            const sub_prefix = try std.fmt.allocPrint(a, "{s}{s} › ", .{ prefix, label });
-            try write_rows(m, w, child, sub_prefix);
-            continue;
-        }
-
         const on = child.toggle_state == 1;
         const mark = switch (child.toggle_type) {
             .none => "",
             .checkmark => if (on) "✓ " else "☐ ",
             .radio => if (on) "● " else "○ ",
         };
-        try w.print("{s}{s}{s}", .{ mark, prefix, label });
+
+        for (0..depth) |_| try w.writeAll(indent);
+        try w.print("{s}{s}", .{ mark, label });
         // The row options of rofi: "\x00" before the first, "\x1f" between.
         var separator: []const u8 = "\x00";
         if (child.icon_name.len > 0) {
             try w.print("{s}icon\x1f{s}", .{ separator, child.icon_name });
             separator = "\x1f";
         }
-        if (!child.enabled) {
+        if (!child.enabled or child.submenu) {
             try w.print("{s}nonselectable\x1ftrue", .{ separator });
             separator = "\x1f";
         }
-        if (on) try w.print("{s}active\x1ftrue", .{ separator });
+        if (on) {
+            try w.print("{s}active\x1ftrue", .{ separator });
+            separator = "\x1f";
+        }
+        if (parents.len > 0) try w.print("{s}meta\x1f{s}", .{ separator, parents });
         try w.writeByte('\n');
-        try m.row_ids.append(ctx.gpa, child.id);
+        try m.row_ids.append(ctx.gpa, if (child.submenu) no_id else child.id);
+
+        if (child.submenu) {
+            const sub_parents =
+                if (parents.len > 0) try std.fmt.allocPrint(a, "{s} {s}", .{ parents, label })
+                else label;
+            try write_rows(m, w, child, depth + 1, sub_parents);
+        }
     }
 }
 
@@ -400,7 +413,7 @@ fn show(m: *Menu) !void {
     const a = m.arena.allocator();
 
     var rows: std.Io.Writer.Allocating = .init(a);
-    try write_rows(m, &rows.writer, &m.root, "");
+    try write_rows(m, &rows.writer, &m.root, 0, "");
     if (m.row_ids.items.len == 0) {
         log.info("{s}: the menu is empty", .{ m.service });
         close();
