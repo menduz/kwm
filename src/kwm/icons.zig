@@ -5,7 +5,9 @@
 //!
 //! For each name, the symbolic icon ("name-symbolic") comes first. A
 //! symbolic icon is drawn in the color of the text, as GTK does: its shape
-//! and its alpha stay, and its colors change.
+//! and its alpha stay, and its colors change. Some themes (SE98) give
+//! symbolic names to links to their regular icons. Only a file that is
+//! symbolic after the links gets the color.
 //!
 //! libspng reads the PNG files, and resvg draws the SVG files at the
 //! requested size. The images and the themes stay in a cache until `reset`.
@@ -163,11 +165,22 @@ const symbolic_suffix = "-symbolic";
 
 /// Read the file of the icon `name`. A symbolic file gets the color `color`.
 fn load(name: []const u8, path: []const u8, size: i32, color: u32) ?*pixman.Image {
-    log.debug("{s} ({}): {s}", .{ name, size, path });
+    var real_buffer: [max_path]u8 = undefined;
+    const real = real_path(path, &real_buffer) orelse path;
+    log.debug("{s} ({}): {s}", .{ name, size, real });
     const image = read(path, size) orelse return null;
-    const file_name = path[if (mem.lastIndexOfScalar(u8, path, '/')) |i| i + 1 else 0 ..];
+    const file_name = real[if (mem.lastIndexOfScalar(u8, real, '/')) |i| i + 1 else 0 ..];
     if (mem.indexOf(u8, file_name, symbolic_suffix) != null) recolor(image, color);
     return image;
+}
+
+
+/// The path without links, or null.
+fn real_path(path: []const u8, buffer: *[max_path]u8) ?[]const u8 {
+    var path_buffer: [max_path]u8 = undefined;
+    const path_z = std.fmt.bufPrintZ(&path_buffer, "{s}", .{ path }) catch return null;
+    const real = std.c.realpath(path_z.ptr, buffer) orelse return null;
+    return mem.span(real);
 }
 
 
