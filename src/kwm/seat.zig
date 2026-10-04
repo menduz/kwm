@@ -1164,6 +1164,10 @@ fn wl_pointer_listener(wl_pointer: *wl.Pointer, event: wl.Pointer.Event, seat: *
                 switch (target.area) {
                     .widget => |w| widgets.scroll(w.side, w.index, data.value.toDouble()),
                     .layout => {},
+                    .tray => |ptr| if (comptime build_options.tray_enabled) {
+                        const tray = @import("tray.zig");
+                        if (tray.find(ptr)) |item| tray.scroll(item, data.value.toDouble());
+                    },
                 }
             }
         },

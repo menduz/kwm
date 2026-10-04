@@ -1,5 +1,5 @@
-//! The tooltip of the bar widgets and of the layout area. There is one tooltip
-//! for all outputs.
+//! The tooltip of the bar widgets, of the layout area and of the tray items.
+//! There is one tooltip for all outputs.
 //!
 //! The pointer events of the bar select the target widget. After
 //! `bar.tooltip_delay` milliseconds, the next render sequence makes a shell
@@ -21,7 +21,9 @@ const render_ = @import("render.zig");
 const widgets = @import("widgets.zig");
 const Context = @import("context.zig");
 const ShellSurface = @import("shell_surface.zig");
+const build_options = @import("build_options");
 const Bar = @import("bar.zig");
+const tray = @import("tray.zig");
 const Output = @import("output.zig");
 const Layout = @import("layout.zig");
 
@@ -34,6 +36,8 @@ pub const Area = union(enum) {
     },
     /// The tooltip shows all layouts.
     layout,
+    /// The tooltip of a tray item.
+    tray: *tray.Item,
 };
 
 pub const Target = struct {
@@ -165,6 +169,7 @@ pub fn render() void {
     if (!visible) return hide();
 
     var layout_buffer: [256]u8 = undefined;
+    var tray_buffer: [1024]u8 = undefined;
     const text = switch (t.area) {
         .widget => |w| blk: {
             const states = widgets.states(w.side);
@@ -172,6 +177,9 @@ pub fn render() void {
             break :blk states[w.index].tooltip.items;
         },
         .layout => layout_list(t.bar.output, &layout_buffer),
+        .tray => |ptr| if (comptime build_options.tray_enabled)
+                (tray.find(ptr) orelse return hide()).tooltip(&tray_buffer)
+            else "",
     };
     if (text.len == 0) return hide();
 

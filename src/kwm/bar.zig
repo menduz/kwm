@@ -25,6 +25,7 @@ const Output = @import("output.zig");
 const ShellSurface = @import("shell_surface.zig");
 const widgets = @import("widgets.zig");
 const tooltip = @import("tooltip.zig");
+const tray = @import("tray.zig");
 
 const ctx = Context.get();
 const color_pattern = mvzr.compile("\\^#([0-9a-zA-Z]{8}|!)").?;
@@ -55,6 +56,18 @@ dynamic_splits: std.ArrayList(i32) = undefined,
 widget_rects_buffer: [2 * widgets.max_widgets]WidgetRect = undefined,
 widget_rects: std.ArrayList(WidgetRect) = undefined,
 
+/// The places of the tray items in the dynamic component, in physical pixels.
+tray_rects_buffer: [max_tray_items]TrayRect = undefined,
+tray_rects: std.ArrayList(TrayRect) = undefined,
+
+const max_tray_items = 32;
+
+const TrayRect = struct {
+    item: *tray.Item,
+    x0: i32,
+    x1: i32,
+};
+
 const WidgetRect = struct {
     side: widgets.Side,
     index: usize,
@@ -79,6 +92,7 @@ pub fn init(self: *Self, output: *Output) !void {
 
     self.dynamic_splits = .initBuffer(&self.dynamic_splits_buffer);
     self.widget_rects = .initBuffer(&self.widget_rects_buffer);
+    self.tray_rects = .initBuffer(&self.tray_rects_buffer);
 
     if (!self.hidden) {
         try self.show();
@@ -170,6 +184,12 @@ pub fn handle_click(self: *Self, seat: *Seat) void {
     }
 
     x -= self.static_component_width();
+    if (comptime build_options.tray_enabled) {
+        if (self.tray_rect_at(x)) |rect| {
+            if (tray.find(rect.item)) |item| tray.click(item, seat.button, pointer_x, pointer_y);
+            return;
+        }
+    }
     if (self.widget_index_at(x)) |rect| {
         widgets.click(rect.side, rect.index, seat.button);
         return;
@@ -199,6 +219,14 @@ fn widget_index_at(self: *const Self, x: i32) ?WidgetRect {
 }
 
 
+fn tray_rect_at(self: *const Self, x: i32) ?TrayRect {
+    for (self.tray_rects.items) |rect| {
+        if (x >= rect.x0 and x < rect.x1) return rect;
+    }
+    return null;
+}
+
+
 /// The widget or the layout area under a pointer at (`surface_x`,
 /// `surface_y`) on `surface`, for the tooltip and for scroll events.
 pub fn widget_at(self: *Self, surface: *wl.Surface, surface_x: i32, surface_y: i32) ?tooltip.Target {
@@ -208,6 +236,9 @@ pub fn widget_at(self: *Self, surface: *wl.Surface, surface_x: i32, surface_y: i
     // The layout area is between the first two splits: the end of the mode
     // area and the end of the layout area.
     const area: tooltip.Area, const x0: i32 = blk: {
+        if (comptime build_options.tray_enabled) {
+            if (self.tray_rect_at(x)) |rect| break :blk .{ .{ .tray = rect.item }, rect.x0 };
+        }
         if (self.widget_index_at(x)) |rect| {
             break :blk .{ .{ .widget = .{ .side = rect.side, .index = rect.index } }, rect.x0 };
         }
@@ -724,8 +755,44 @@ fn render_dynamic_component(self: *Self) void {
     const status_fg = render_.utils.color(status_scheme.fg);
     const status_bg = render_.utils.color(status_scheme.bg);
 
-    // The widgets at the right end. `right_x` is where they start.
-    var right_x: i16 = @intCast(w);
+    // The tray at the right end. `tray_x` is where it starts.
+    var tray_x: u16 = w;
+    self.tray_rects.clearRetainingCapacity();
+    if (comptime build_options.tray_enabled) draw_tray: {
+        const cfg = ctx.cfg.bar.tray orelse break :draw_tray;
+        var item_buffer: [max_tray_items]*tray.Item = undefined;
+        const shown = tray.visible_items(&item_buffer);
+        if (shown.len == 0) break :draw_tray;
+
+        const bar_h: i32 = h;
+        const size: i32 =
+            if (cfg.icon_size > 0) @min(bar_h, utils.logical2physics(i32, @intCast(cfg.icon_size), self.scale))
+            else bar_h;
+        const gap: i32 = utils.logical2physics(i32, @intCast(cfg.spacing), self.scale);
+        const n: i32 = @intCast(shown.len);
+        const width: i32 = n * size + (n - 1) * gap + pad;
+        tray_x = @intCast(@max(title_start, @as(i32, w) - width));
+
+        var rect = [_]pixman.Rectangle16 {
+            .{ .x = @intCast(tray_x), .y = 0, .width = w - tray_x, .height = h },
+        };
+        _ = pixman.Image.fillRectangles(.src, buffer.image, &status_bg, 1, &rect);
+
+        var item_x: i32 = @as(i32, tray_x) + @divFloor(pad, 2);
+        const item_y: i32 = @divFloor(bar_h - size, 2);
+        for (shown) |item| {
+            self.draw_tray_item(buffer, item, item_x, item_y, size, &status_fg);
+            self.tray_rects.appendBounded(.{
+                .item = item,
+                .x0 = item_x - @divFloor(gap, 2),
+                .x1 = item_x + size + @divFloor(gap + 1, 2),
+            }) catch {};
+            item_x += size + gap;
+        }
+    }
+
+    // The widgets at the left of the tray. `right_x` is where they start.
+    var right_x: i16 = @intCast(tray_x);
     draw_right: {
         var right = self.rasterize_widgets(.right, status_fg) catch |err| {
             log.warn("<{*}> rasterize right widgets failed: {}", .{ self, err });
@@ -734,8 +801,8 @@ fn render_dynamic_component(self: *Self) void {
         defer right.deinit();
         if (right.width == 0) break :draw_right;
 
-        right_x = @max(title_start, @as(i16, @intCast(w -| @as(u16, @intCast(right.width)) -| pad)));
-        self.draw_widgets(buffer, &right, right_x, w, &status_bg, pad, y);
+        right_x = @max(title_start, @as(i16, @intCast(tray_x -| @as(u16, @intCast(right.width)) -| pad)));
+        self.draw_widgets(buffer, &right, right_x, tray_x, &status_bg, pad, y);
     }
 
     // The status text, at the left of the right widgets.
@@ -792,6 +859,59 @@ fn render_dynamic_component(self: *Self) void {
     self.dynamic_splits.items[self.dynamic_splits.items.len-1] = @min(center_x, status_x);
 
     self.dynamic_component.render(buffer, self.scale);
+}
+
+
+/// Draw a tray item in the square of `size` at (`x`, `y`): its pixmap, or
+/// the first letter of its name.
+fn draw_tray_item(
+    self: *Self,
+    buffer: *render_.Buffer,
+    item: *tray.Item,
+    x: i32,
+    y: i32,
+    size: i32,
+    fg: *const pixman.Color,
+) void {
+    if (item.pixmap_image(size)) |image| {
+        draw_image(buffer, image, x, y, size);
+        return;
+    }
+    const utf32 = render_.utils.to_utf8(ctx.gpa, item.letter()) catch return;
+    defer ctx.gpa.free(utf32);
+    const run = self.font.rasterize_text_run(utf32) orelse return;
+    defer run.destroy();
+    const text_w: i32 = @intCast(render_.utils.text_width(run));
+    _ = self.font.render_text(buffer, run, fg, x + @divFloor(size - text_w, 2), self.text_y());
+}
+
+
+/// Draw `image` in the square of `size` at (`x`, `y`), with its aspect ratio.
+fn draw_image(buffer: *render_.Buffer, image: *pixman.Image, x: i32, y: i32, size: i32) void {
+    const image_w = image.getWidth();
+    const image_h = image.getHeight();
+    const side = @max(image_w, image_h);
+    if (side <= 0 or size <= 0) return;
+    const w = @divFloor(image_w * size, side);
+    const h = @divFloor(image_h * size, side);
+
+    var transform: pixman.Transform = undefined;
+    const ratio: pixman.Fixed = @enumFromInt(@divFloor(side * 65536, size));
+    pixman.Transform.initScale(&transform, ratio, ratio);
+    _ = image.setTransform(&transform);
+    // Pixel art stays sharp when the size is a multiple.
+    const filter: pixman.Filter =
+        if (@mod(size, side) == 0) .nearest
+        else if (side > size) .best
+        else .good;
+    var no_params = [_]pixman.Fixed { @enumFromInt(0) };
+    _ = image.setFilter(filter, &no_params, 0);
+
+    pixman.Image.composite32(
+        .over, image, null, buffer.image,
+        0, 0, 0, 0,
+        x + @divFloor(size - w, 2), y + @divFloor(size - h, 2), w, h,
+    );
 }
 
 
@@ -971,6 +1091,7 @@ fn hide(self: *Self) void {
 
     tooltip.forget(self);
     self.widget_rects.clearRetainingCapacity();
+    self.tray_rects.clearRetainingCapacity();
 
     self.static_component.deinit();
     self.static_component = undefined;

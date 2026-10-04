@@ -14,8 +14,10 @@ const Io = std.Io;
 const log = std.log.scoped(.tray);
 
 const posix = @import("posix");
+const pixman = @import("pixman");
 
 const sd = @import("sd_bus.zig");
+const types = @import("types.zig");
 const Context = @import("context.zig");
 
 const ctx = Context.get();
@@ -66,6 +68,17 @@ pub const Item = struct {
     key: [:0]const u8,
     signal_slot: ?*sd.Slot = null,
     call_slot: ?*sd.Slot = null,
+    /// The call of a click, and its method.
+    action_slot: ?*sd.Slot = null,
+    action: [:0]const u8 = "",
+    /// The position of the last click, for ContextMenu after Activate fails.
+    click_x: i32 = 0,
+    click_y: i32 = 0,
+    /// The scroll that is not sent yet. Refer to `scroll`.
+    scroll_value: f64 = 0,
+    /// The image of the last pixmap that the bar drew, and that pixmap.
+    image: ?*pixman.Image = null,
+    image_source: ?*const Pixmap = null,
     /// A signal came while a call was pending. Get the properties again.
     stale: bool = false,
     /// The item gave its properties one time or more.
@@ -94,13 +107,143 @@ pub const Item = struct {
     fn destroy(self: *Item) void {
         _ = sd.sd_bus_slot_unref(self.signal_slot);
         _ = sd.sd_bus_slot_unref(self.call_slot);
+        _ = sd.sd_bus_slot_unref(self.action_slot);
+        self.drop_image();
         self.arena.deinit();
         ctx.gpa.free(self.key);
         ctx.gpa.free(self.path);
         ctx.gpa.free(self.service);
         ctx.gpa.destroy(self);
     }
+
+    fn drop_image(self: *Item) void {
+        if (self.image) |image| _ = image.unref();
+        self.image = null;
+        self.image_source = null;
+    }
+
+    /// The icon from the pixmaps of the item, for a square of `size`
+    /// physical pixels: the smallest pixmap that is not smaller, else the
+    /// largest pixmap. With the status NeedsAttention, the attention pixmaps
+    /// come first. null: no pixmaps.
+    pub fn pixmap_image(self: *Item, size: i32) ?*pixman.Image {
+        const pixmaps =
+            if (self.props.status == .needs_attention and self.props.attention_icon_pixmap.len > 0)
+                self.props.attention_icon_pixmap
+            else self.props.icon_pixmap;
+        if (pixmaps.len == 0) return null;
+
+        var best = &pixmaps[0];
+        for (pixmaps[1..]) |*pixmap| {
+            const best_fits = @max(best.width, best.height) >= size;
+            const fits = @max(pixmap.width, pixmap.height) >= size;
+            if (fits and (!best_fits or pixmap.width < best.width)) best = pixmap;
+            if (!fits and !best_fits and pixmap.width > best.width) best = pixmap;
+        }
+        if (self.image_source != best) {
+            self.drop_image();
+            self.image = to_image(best);
+            self.image_source = best;
+        }
+        return self.image;
+    }
+
+    /// The first letter of the id or the title, as upper case. The bar shows
+    /// it when the item has no icon.
+    pub fn letter(self: *const Item) []const u8 {
+        const name = if (self.props.id.len > 0) self.props.id else self.props.title;
+        if (name.len == 0) return "?";
+        const n = std.unicode.utf8ByteSequenceLength(name[0]) catch return "?";
+        if (n > name.len) return "?";
+        if (n == 1) return upper[std.ascii.toUpper(name[0])..][0..1];
+        return name[0..n];
+    }
+
+    /// The tooltip text: the title, and on the next lines the text without
+    /// markup. Without a tooltip, the title or the id.
+    pub fn tooltip(self: *const Item, buffer: []u8) []const u8 {
+        var w: std.Io.Writer = .fixed(buffer);
+        const props = &self.props;
+        const title =
+            if (props.tooltip_title.len > 0) props.tooltip_title
+            else if (props.title.len > 0) props.title
+            else props.id;
+        w.writeAll(mem.trim(u8, title, " \n")) catch return w.buffered();
+        if (props.tooltip_text.len > 0) {
+            w.writeByte('\n') catch return w.buffered();
+            write_without_markup(&w, props.tooltip_text) catch {};
+        }
+        return mem.trimEnd(u8, w.buffered(), " \n");
+    }
 };
+
+/// All bytes, so that `upper[c..][0..1]` is the byte c.
+const upper = blk: {
+    var bytes: [256]u8 = undefined;
+    for (&bytes, 0..) |*b, i| b.* = i;
+    break :blk bytes;
+};
+
+
+/// Convert a pixmap (ARGB32 in network byte order) to a pixman image with
+/// premultiplied alpha.
+fn to_image(pixmap: *const Pixmap) ?*pixman.Image {
+    const image = pixman.Image.createBits(.a8r8g8b8, pixmap.width, pixmap.height, null, 0) orelse return null;
+    const data = image.getData() orelse {
+        _ = image.unref();
+        return null;
+    };
+    const width: usize = @intCast(pixmap.width);
+    const height: usize = @intCast(pixmap.height);
+    const stride: usize = @intCast(@divExact(image.getStride(), 4));
+    for (0..height) |row| {
+        for (0..width) |col| {
+            const p = pixmap.data[(row * width + col) * 4 ..][0..4];
+            const a: u32 = p[0];
+            const r: u32 = @as(u32, p[1]) * a / 255;
+            const g: u32 = @as(u32, p[2]) * a / 255;
+            const b: u32 = @as(u32, p[3]) * a / 255;
+            data[row * stride + col] = a << 24 | r << 16 | g << 8 | b;
+        }
+    }
+    return image;
+}
+
+
+/// Write `text` without the HTML tags. <br> starts a new line. Decode the
+/// usual entities.
+fn write_without_markup(w: *std.Io.Writer, text: []const u8) !void {
+    const entities = [_]struct { []const u8, u8 } {
+        .{ "&amp;", '&' }, .{ "&lt;", '<' }, .{ "&gt;", '>' },
+        .{ "&quot;", '"' }, .{ "&apos;", '\'' }, .{ "&#39;", '\'' }, .{ "&nbsp;", ' ' },
+    };
+    var i: usize = 0;
+    outer: while (i < text.len) {
+        switch (text[i]) {
+            '<' => {
+                const end = mem.indexOfScalarPos(u8, text, i, '>') orelse text.len - 1;
+                const tag = text[i + 1 .. end];
+                if (std.ascii.startsWithIgnoreCase(tag, "br")) try w.writeByte('\n');
+                i = end + 1;
+            },
+            '&' => {
+                for (entities) |entity| {
+                    if (mem.startsWith(u8, text[i..], entity[0])) {
+                        try w.writeByte(entity[1]);
+                        i += entity[0].len;
+                        continue :outer;
+                    }
+                }
+                try w.writeByte('&');
+                i += 1;
+            },
+            else => |c| {
+                try w.writeByte(c);
+                i += 1;
+            },
+        }
+    }
+}
 
 var bus: ?*sd.Bus = null;
 var unique_name: []const u8 = "";
@@ -136,18 +279,90 @@ pub fn deinit() void {
 /// Start or stop the tray after a change of the configuration.
 pub fn reload() void {
     if (ctx.cfg.bar.tray == null) deinit() else init();
+    changed();
 }
 
 
-/// The items that gave their properties, in the order of registration.
-pub fn ready_items(buffer: []*Item) []*Item {
+/// The items that the bar shows, in the order of registration: the items
+/// that gave their properties, without the passive items.
+pub fn visible_items(buffer: []*Item) []*Item {
+    const cfg = ctx.cfg.bar.tray orelse return buffer[0..0];
     var n: usize = 0;
     for (items.items) |item| {
         if (!item.ready or n == buffer.len) continue;
+        if (item.props.status == .passive and !cfg.show_passive) continue;
         buffer[n] = item;
         n += 1;
     }
     return buffer[0..n];
+}
+
+
+/// The item at this address, when it still exists.
+pub fn find(ptr: *const anyopaque) ?*Item {
+    for (items.items) |item| {
+        if (@as(*const anyopaque, item) == ptr) return item;
+    }
+    return null;
+}
+
+
+/// A click on an item. `x` and `y` are the global position of the pointer.
+/// The left button activates the item, or shows its menu when the item is
+/// only a menu. The right button shows the menu.
+pub fn click(item: *Item, button: types.Button, x: i32, y: i32) void {
+    const method: [:0]const u8 = switch (button) {
+        .left => if (item.props.item_is_menu) "ContextMenu" else "Activate",
+        .middle => "SecondaryActivate",
+        .right => "ContextMenu",
+        else => return,
+    };
+    log.debug("{s}: {s}({}, {})", .{ item.key, method, x, y });
+    item.click_x = x;
+    item.click_y = y;
+    call_action(item, method);
+}
+
+
+fn call_action(item: *Item, method: [:0]const u8) void {
+    item.action_slot = sd.sd_bus_slot_unref(item.action_slot);
+    item.action = method;
+    _ = sd.check(sd.sd_bus_call_method_async(
+        bus orelse return, &item.action_slot, item.service, item.path, item_interface, method.ptr,
+        on_action, item, "ii", @as(c_int, item.click_x), @as(c_int, item.click_y),
+    ), "call an item") catch {};
+}
+
+
+fn on_action(m: *sd.Message, userdata: ?*anyopaque, _: *sd.Error) callconv(.c) c_int {
+    const item: *Item = @ptrCast(@alignCast(userdata.?));
+    item.action_slot = sd.sd_bus_slot_unref(item.action_slot);
+    const err = sd.sd_bus_message_get_error(m) orelse return 0;
+    const name = mem.span(err.name orelse "");
+    // Items that cannot activate show their menu.
+    if (mem.eql(u8, name, "org.freedesktop.DBus.Error.UnknownMethod") and mem.eql(u8, item.action, "Activate")) {
+        call_action(item, "ContextMenu");
+        return 0;
+    }
+    log.warn("{s}: the call failed: {s}", .{ item.key, reply_error(m).? });
+    return 0;
+}
+
+
+/// Scroll on an item. `value` is the axis value of wl_pointer: positive is
+/// down. One wheel step is 15, and gives Scroll(1, "vertical") down or
+/// Scroll(-1, "vertical") up.
+pub fn scroll(item: *Item, value: f64) void {
+    const b = bus orelse return;
+    item.scroll_value += value;
+    while (@abs(item.scroll_value) >= 15) {
+        const down = item.scroll_value > 0;
+        item.scroll_value -= if (down) 15 else -15;
+        _ = sd.sd_bus_call_method_async(
+            b, null, item.service, item.path, item_interface, "Scroll",
+            null, null, "is", @as(c_int, if (down) 1 else -1), "vertical",
+        );
+    }
 }
 
 
@@ -180,6 +395,7 @@ pub fn dispatch() void {
         if (rc < 0) {
             log.err("the session bus failed: errno {}. Stop the tray.", .{ -rc });
             deinit();
+            changed();
             break;
         }
     }
@@ -573,6 +789,7 @@ fn on_properties(m: *sd.Message, userdata: ?*anyopaque, _: *sd.Error) callconv(.
         arena.deinit();
         return 0;
     };
+    item.drop_image();
     item.arena.deinit();
     item.arena = arena;
     item.props = props;
@@ -706,7 +923,14 @@ fn read_tooltip(m: *sd.Message, props: *Properties, a: mem.Allocator) !void {
 }
 
 
-/// The items or their properties changed.
+/// The items or their properties changed. Draw the bars again.
 fn changed() void {
-    log.debug("{} items", .{ items.items.len });
+    var shown = false;
+    var it = ctx.outputs.safeIterator(.forward);
+    while (it.next()) |output| {
+        output.bar.damage(.dynamic);
+        if (!output.bar.hidden) shown = true;
+    }
+    if (shown) ctx.rwm.manageDirty();
+    @import("tooltip.zig").damage();
 }
