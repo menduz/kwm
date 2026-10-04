@@ -12,6 +12,14 @@ river-window-management-v1 protocol.
 
 # Screenshots
 
+![The default configuration: the bar with the tags, the layout, the title,
+the widgets and the tray, and three terminals in the tile layout](./screenshots/kwm.png)
+
+`screenshots/kwm.png` shows `config.def.zon`. The build makes it in the Nix
+sandbox: river runs with the headless backend of wlroots, and the clock and
+the meters have fixed values. Thus each build gives the same pixels. To make
+it again after a change, run `update-screenshots` in `nix develop`.
+
 ![tile](./images/tile.png)
 
 ![grid](./images/grid.png)
