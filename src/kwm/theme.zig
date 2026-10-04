@@ -68,7 +68,9 @@ pub fn bevel(focused: bool) config.Bevel {
     result.highlight = colors.get(names.highlight) orelse result.highlight;
     result.shadow = colors.get(names.shadow) orelse result.shadow;
     result.frame = colors.get(names.frame) orelse result.frame;
-    result.band = colors.get(if (focused) names.focus_band else names.unfocus_band) orelse result.band;
+    if (if (focused) names.focus_outline else names.unfocus_outline) |name| {
+        result.outline = colors.get(name) orelse result.outline;
+    }
     return result;
 }
 

@@ -75,12 +75,14 @@ pub const Config = struct {
         /// .flat: the compositor draws the border in `color.focus` or
         /// `color.unfocus`.
         /// .raised: kwm draws the window border style of Windows: a raised
-        /// outer edge, a raised inner edge and a band between the edges and
-        /// the window. Refer to `raised`.
+        /// outer edge and a raised inner edge, with an outline of 1 pixel
+        /// outside them when the border is 3 pixels or more. Refer to `raised`.
+        /// A window with client side decorations draws its own frame, thus
+        /// kwm does not draw a border around it.
         style: enum { flat, raised } = .flat,
         raised: struct {
-            focus: Bevel = .{ .band = 0x000080ff },
-            unfocus: Bevel = .{ .band = 0x808080ff },
+            focus: Bevel = .{ .outline = 0x000080ff },
+            unfocus: Bevel = .{},
             /// Read the colors from the `@define-color` lines of gtk-3.0/gtk.css
             /// of the current GTK theme. Each field names a color of that
             /// file. A color that the file does not give comes from `focus`
@@ -91,8 +93,9 @@ pub const Config = struct {
                 highlight: []const u8 = "light_shadow",
                 shadow: []const u8 = "dark_shadow",
                 frame: []const u8 = "borders",
-                focus_band: []const u8 = "wm_active_title",
-                unfocus_band: []const u8 = "wm_inactive_title",
+                /// null: the outline comes from `focus` and `unfocus`.
+                focus_outline: ?[]const u8 = "wm_active_title",
+                unfocus_outline: ?[]const u8 = null,
             } = .{},
         } = .{},
     },
@@ -135,8 +138,8 @@ pub const Bevel = struct {
     shadow: u32 = 0x808080ff,
     /// The bottom and right line of the outer edge.
     frame: u32 = 0x000000ff,
-    /// The area between the inner edge and the window.
-    band: u32 = 0xc0c0c0ff,
+    /// The line of 1 pixel outside the outer edge. Transparent: no outline.
+    outline: u32 = 0x00000000,
 };
 
 pub const default: Config = @import("default_config");

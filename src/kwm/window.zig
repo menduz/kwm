@@ -460,12 +460,28 @@ pub fn set_border(self: *Self, width: i32, rgb: u32) void {
 }
 
 
+/// True when the client draws its own decorations (CSD).
+pub fn uses_csd(self: *const Self) bool {
+    return (self.decoration orelse ctx.cfg.default_window_decoration) == .csd;
+}
+
+
+/// The space around a maximized window. A client with its own decorations
+/// draws no frame when it is maximized, so with the raised style it fills
+/// the output.
+fn maximize_border(self: *const Self) i32 {
+    if (ctx.cfg.border.style == .raised and self.uses_csd()) return 0;
+    return ctx.cfg.border.width;
+}
+
+
 /// Draw, change or remove the raised border. A window that fills the output
-/// has no border. Every other window has the same border, also a window with
-/// client side decorations.
+/// has no border. A window with client side decorations draws its own frame
+/// outside its geometry, in the space of the border (for example the GTK
+/// theme), so it has no border either.
 fn render_raised_border(self: *Self) void {
     const border = ctx.cfg.border.width;
-    if (ctx.cfg.border.style != .raised or border <= 0 or self.fullscreen == .output) {
+    if (ctx.cfg.border.style != .raised or border <= 0 or self.fullscreen == .output or self.uses_csd()) {
         if (self.raised_border) |*raised| {
             raised.deinit();
             self.raised_border = null;
@@ -831,8 +847,8 @@ pub fn manage(self: *Self) void {
         if (self.maximize) {
             if (self.output) |output| {
 
-                width = output.exclusive_width() - 2*ctx.cfg.border.width;
-                height = output.exclusive_height() - 2*ctx.cfg.border.width;
+                width = output.exclusive_width() - 2*self.maximize_border();
+                height = output.exclusive_height() - 2*self.maximize_border();
             }
         }
         if (self.swallowing_border != null) {
@@ -887,8 +903,8 @@ pub fn render(self: *Self) void {
 
     if (self.maximize) {
         log.debug("<{*}> rendering maximize", .{ self });
-        offset_x += ctx.cfg.border.width;
-        offset_y += ctx.cfg.border.width;
+        offset_x += self.maximize_border();
+        offset_y += self.maximize_border();
         self.rwm_window_node.setPosition(output_x + offset_x, output_y + offset_y);
         self.rwm_window.show();
         return;

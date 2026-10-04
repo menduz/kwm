@@ -257,11 +257,13 @@
             .swallowing = 0x0830e6ff,
         },
         // .flat: one color, drawn by river
-        // .raised: the 3D window border of Windows 9x, drawn by kwm with the colors below
+        // .raised: the 3D window border of Windows 9x, drawn by kwm with the colors below;
+        // a border of 3 pixels or more has an outline of 1 pixel outside the edges
+        // (transparent: no outline)
         .style = .flat,
         .raised = .{
-            .focus = .{ .face = 0xc0c0c0ff, .highlight = 0xffffffff, .shadow = 0x808080ff, .frame = 0x000000ff, .band = 0x000080ff },
-            .unfocus = .{ .face = 0xc0c0c0ff, .highlight = 0xffffffff, .shadow = 0x808080ff, .frame = 0x000000ff, .band = 0x808080ff },
+            .focus = .{ .face = 0xc0c0c0ff, .highlight = 0xffffffff, .shadow = 0x808080ff, .frame = 0x000000ff, .outline = 0x000080ff },
+            .unfocus = .{ .face = 0xc0c0c0ff, .highlight = 0xffffffff, .shadow = 0x808080ff, .frame = 0x000000ff, .outline = 0x00000000 },
             // read the colors above from the @define-color lines of gtk-3.0/gtk.css of the
             // current GTK theme (GTK_THEME at start); a color that the file lacks keeps the
             // value above; null to use only the values above
@@ -270,8 +272,8 @@
                 .highlight = "light_shadow",
                 .shadow = "dark_shadow",
                 .frame = "borders",
-                .focus_band = "wm_active_title",
-                .unfocus_band = "wm_inactive_title",
+                .focus_outline = "wm_active_title",
+                .unfocus_outline = null,
             },
         },
     },

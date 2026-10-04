@@ -1,11 +1,14 @@
 //! The window border style of Windows: a raised outer edge, a raised inner
-//! edge, and a band between the edges and the window. Refer to the "Window
+//! edge, and `face` between the edges and the window. Refer to the "Window
 //! Border Style" of the Windows user interface guidelines:
 //!
 //! - raised outer edge: `face` at the top and left, `frame` at the bottom and
 //!   right.
 //! - raised inner edge: `highlight` at the top and left, `shadow` at the
 //!   bottom and right.
+//!
+//! A border of 3 pixels or more also has an outline of 1 pixel in `outline`
+//! outside the outer edge. The outline shows the focused window.
 //!
 //! A decoration below the window holds one solid color strip for each line.
 //! The strips of the bottom and right lines are above the others, thus they
@@ -31,10 +34,14 @@ const ctx = Context.get();
 
 /// The strips, from the bottom of the stack to the top.
 const Strip = enum {
-    band_top,
-    band_bottom,
-    band_left,
-    band_right,
+    outline_top,
+    outline_bottom,
+    outline_left,
+    outline_right,
+    fill_top,
+    fill_bottom,
+    fill_left,
+    fill_right,
     face_top,
     face_left,
     highlight_top,
@@ -130,30 +137,40 @@ pub fn render(self: *Self, width: i32, height: i32, border: i32, bevel: config.B
     self.wl_surface.damage(0, 0, w, h);
     self.wp_viewport.setDestination(w, h);
 
-    // The band is between the two edges: 2 pixels from the outside.
-    const band = border - 2;
+    // The outline uses the outside pixel. The edges are inside the outline,
+    // and the face fills the rest to the window.
+    const o: i32 = if (border >= 3) 1 else 0;
+    const ew = w - 2 * o;
+    const eh = h - 2 * o;
+    const e = o + 2;
+    const fill = border - e;
 
     for (&self.strips, 0..) |*strip, i| {
         const kind: Strip = @enumFromInt(i);
         const x: i32, const y: i32, const sw: i32, const sh: i32, const color: u32 = switch (kind) {
-            .band_top => .{ 2, 2, w - 4, band, bevel.band },
-            .band_bottom => .{ 2, h - border, w - 4, band, bevel.band },
-            .band_left => .{ 2, border, band, h - 2 * border, bevel.band },
-            .band_right => .{ w - border, border, band, h - 2 * border, bevel.band },
-            .face_top => .{ 0, 0, w, 1, bevel.face },
-            .face_left => .{ 0, 0, 1, h, bevel.face },
-            .highlight_top => .{ 1, 1, w - 2, 1, bevel.highlight },
-            .highlight_left => .{ 1, 1, 1, h - 2, bevel.highlight },
-            .shadow_bottom => .{ 1, h - 2, w - 2, 1, bevel.shadow },
-            .shadow_right => .{ w - 2, 1, 1, h - 2, bevel.shadow },
-            .frame_bottom => .{ 0, h - 1, w, 1, bevel.frame },
-            .frame_right => .{ w - 1, 0, 1, h, bevel.frame },
+            .outline_top => .{ 0, 0, w, 1, bevel.outline },
+            .outline_bottom => .{ 0, h - 1, w, 1, bevel.outline },
+            .outline_left => .{ 0, 1, 1, h - 2, bevel.outline },
+            .outline_right => .{ w - 1, 1, 1, h - 2, bevel.outline },
+            .fill_top => .{ e, e, w - 2 * e, fill, bevel.face },
+            .fill_bottom => .{ e, h - border, w - 2 * e, fill, bevel.face },
+            .fill_left => .{ e, border, fill, h - 2 * border, bevel.face },
+            .fill_right => .{ w - border, border, fill, h - 2 * border, bevel.face },
+            .face_top => .{ o, o, ew, 1, bevel.face },
+            .face_left => .{ o, o, 1, eh, bevel.face },
+            .highlight_top => .{ o + 1, o + 1, ew - 2, 1, bevel.highlight },
+            .highlight_left => .{ o + 1, o + 1, 1, eh - 2, bevel.highlight },
+            .shadow_bottom => .{ o + 1, o + eh - 2, ew - 2, 1, bevel.shadow },
+            .shadow_right => .{ o + ew - 2, o + 1, 1, eh - 2, bevel.shadow },
+            .frame_bottom => .{ o, o + eh - 1, ew, 1, bevel.frame },
+            .frame_right => .{ o + ew - 1, o, 1, eh, bevel.frame },
         };
 
         // A border of 1 pixel has only the outer edge. A border of 2 pixels
-        // has no band.
+        // has the two edges. A border of 3 pixels adds the outline.
         const needed = switch (kind) {
-            .band_top, .band_bottom, .band_left, .band_right => band > 0,
+            .outline_top, .outline_bottom, .outline_left, .outline_right => o > 0,
+            .fill_top, .fill_bottom, .fill_left, .fill_right => fill > 0,
             .highlight_top, .highlight_left, .shadow_bottom, .shadow_right => border >= 2,
             else => border >= 1,
         };
