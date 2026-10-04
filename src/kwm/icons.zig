@@ -1,13 +1,17 @@
-//! Icons by name, as the XDG icon theme specification says. The search order
-//! is the icon theme of the tray, the themes that it inherits, hicolor, and
-//! then the pixmaps directories. When a name is not found, the search
-//! continues with the name without its last "-part", as GTK does.
+//! Icons by name, as the XDG icon theme specification says, in two steps:
 //!
-//! For each name, the symbolic icon ("name-symbolic") comes first. A
-//! symbolic icon is drawn in the color of the text, as GTK does: its shape
-//! and its alpha stay, and its colors change. Some themes (SE98) give
-//! symbolic names to links to their regular icons. Only a file that is
-//! symbolic after the links gets the color.
+//! 1. The symbolic icon ("name-symbolic") in the icon theme of the tray
+//!    (for example Adwaita), the themes that it inherits, and hicolor.
+//! 2. The icon of the application: in its IconThemePath, hicolor, and the
+//!    pixmaps directories. The icon theme of the tray is not used.
+//!
+//! In each step, when a name is not found, the search continues with the
+//! name without its last "-part", as GTK does.
+//!
+//! A symbolic icon is drawn in the color of the text, as GTK does: its shape
+//! and its alpha stay, and its colors change. Some themes give symbolic
+//! names to links to their regular icons. Only a file that is symbolic after
+//! the links gets the color.
 //!
 //! libspng reads the PNG files, and resvg draws the SVG files at the
 //! requested size. The images and the themes stay in a cache until `reset`.
@@ -140,23 +144,36 @@ fn find(name: []const u8, theme_path: []const u8, size: i32, color: u32) ?*pixma
     // An absolute path is a file.
     if (mem.startsWith(u8, name, "/")) return load(name, name, size, color);
 
-    var variant = name;
+    const base = if (mem.endsWith(u8, name, symbolic_suffix)) name[0 .. name.len - symbolic_suffix.len] else name;
+
+    // 1. The symbolic icon, from the icon theme.
+    var variant = base;
     while (true) {
-        if (!mem.endsWith(u8, variant, symbolic_suffix)) {
-            if (std.fmt.bufPrint(&symbolic_buffer, "{s}" ++ symbolic_suffix, .{ variant })) |symbolic| {
-                if (find_file(&path_buffer, symbolic, theme_path, theme_name, size)) |path| {
-                    return load(name, path, size, color);
-                }
-            } else |_| {}
-        }
-        if (find_file(&path_buffer, variant, theme_path, theme_name, size)) |path| {
+        if (std.fmt.bufPrint(&symbolic_buffer, "{s}" ++ symbolic_suffix, .{ variant })) |symbolic| {
+            if (find_file(&path_buffer, symbolic, theme_path, theme_name, size)) |path| {
+                return load(name, path, size, color);
+            }
+        } else |_| {}
+        variant = shorter(variant) orelse break;
+    }
+
+    // 2. The icon of the application, without the icon theme.
+    variant = base;
+    while (true) {
+        if (find_file(&path_buffer, variant, theme_path, "hicolor", size)) |path| {
             return load(name, path, size, color);
         }
-        const dash = mem.lastIndexOfScalar(u8, variant, '-') orelse break;
-        variant = variant[0..dash];
+        variant = shorter(variant) orelse break;
     }
     log.debug("{s} ({}): not found", .{ name, size });
     return null;
+}
+
+
+/// The name without its last "-part", or null.
+fn shorter(name: []const u8) ?[]const u8 {
+    const dash = mem.lastIndexOfScalar(u8, name, '-') orelse return null;
+    return name[0..dash];
 }
 
 
