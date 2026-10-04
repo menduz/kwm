@@ -15,6 +15,7 @@ const Window = @import("kwm/window.zig");
 const Context = @import("kwm/context.zig");
 const widgets = @import("kwm/widgets.zig");
 const tray = @import("kwm/tray.zig");
+const tray_menu = @import("kwm/tray_menu.zig");
 
 const FDType = enum {
     wayland,
@@ -23,6 +24,7 @@ const FDType = enum {
     key_repeat,
     widget_script,
     tray,
+    tray_menu,
 };
 
 pub const Layout = @import("kwm/layout.zig");
@@ -110,6 +112,10 @@ pub fn run(wl_display: *wl.Display) !void {
                 try poll_fds.appendBounded(fd);
                 try fd_types.appendBounded(.tray);
             }
+            if (tray_menu.poll_fd()) |fd| {
+                try poll_fds.appendBounded(fd);
+                try fd_types.appendBounded(.tray_menu);
+            }
         }
 
         _ = wl_display.flush();
@@ -126,7 +132,7 @@ pub fn run(wl_display: *wl.Display) !void {
             // A script that stops gives POLL.HUP. Read to the end of the pipe.
             // sd-bus reads and writes the bus, and finds the errors.
             const events: i16 = switch (fd_type) {
-                .widget_script => posix.POLL.IN | posix.POLL.HUP,
+                .widget_script, .tray_menu => posix.POLL.IN | posix.POLL.HUP,
                 .tray => poll_fd.events | posix.POLL.HUP | posix.POLL.ERR,
                 else => posix.POLL.IN,
             };
@@ -144,6 +150,7 @@ pub fn run(wl_display: *wl.Display) !void {
                     },
                     .widget_script => if (comptime build_options.bar_enabled) widgets.handle_script_fd(poll_fd.fd),
                     .tray => if (comptime build_options.tray_enabled) tray.dispatch(),
+                    .tray_menu => if (comptime build_options.tray_enabled) tray_menu.handle_fd(),
                 }
             }
         }

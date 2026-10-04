@@ -160,6 +160,9 @@
         //     .spacing = 4,
         //     .icon_theme = "hicolor",
         //     .show_passive = false,
+        //     // the menus of the items: rows on stdin, the index of the chosen row on stdout
+        //     // {title}: name of the item, {x} {y} {right}: place of the icon on its output
+        //     .menu_command = .{ "rofi", "-dmenu", "-i", "-no-custom", "-format", "i", "-p", "{title}" },
         // },
         .tray = null,
 

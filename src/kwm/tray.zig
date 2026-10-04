@@ -18,6 +18,8 @@ const pixman = @import("pixman");
 
 const sd = @import("sd_bus.zig");
 const icons = @import("icons.zig");
+const tray_menu = @import("tray_menu.zig");
+pub const MenuPlace = tray_menu.Place;
 const types = @import("types.zig");
 const Context = @import("context.zig");
 
@@ -72,9 +74,11 @@ pub const Item = struct {
     /// The call of a click, and its method.
     action_slot: ?*sd.Slot = null,
     action: [:0]const u8 = "",
-    /// The position of the last click, for ContextMenu after Activate fails.
+    /// The position of the last click, and the place of the icon, for the
+    /// menu after Activate fails.
     click_x: i32 = 0,
     click_y: i32 = 0,
+    click_place: MenuPlace = .{ .x = 0, .y = 0, .right = 0 },
     /// The scroll that is not sent yet. Refer to `scroll`.
     scroll_value: f64 = 0,
     /// The image of the last pixmap that the bar drew, and that pixmap.
@@ -286,6 +290,7 @@ pub fn deinit() void {
     items.clearAndFree(ctx.gpa);
     for (slots.items) |slot| _ = sd.sd_bus_slot_unref(slot);
     slots.clearAndFree(ctx.gpa);
+    tray_menu.close();
     watcher = false;
     unique_name = "";
     bus = sd.sd_bus_flush_close_unref(bus);
@@ -326,24 +331,43 @@ pub fn find(ptr: *const anyopaque) ?*Item {
 }
 
 
-/// A click on an item. `x` and `y` are the global position of the pointer.
-/// The left button activates the item, or shows its menu when the item is
-/// only a menu. The right button shows the menu.
-pub fn click(item: *Item, button: types.Button, x: i32, y: i32) void {
-    const method: [:0]const u8 = switch (button) {
-        .left => if (item.props.item_is_menu) "ContextMenu" else "Activate",
-        .middle => "SecondaryActivate",
-        .right => "ContextMenu",
-        else => return,
-    };
-    log.debug("{s}: {s}({}, {})", .{ item.key, method, x, y });
+/// A click on an item. `x` and `y` are the global position of the pointer,
+/// and `place` is the place of the icon for the menu. The left button
+/// activates the item, or shows its menu when the item is only a menu. The
+/// right button shows the menu.
+pub fn click(item: *Item, button: types.Button, x: i32, y: i32, place: MenuPlace) void {
     item.click_x = x;
     item.click_y = y;
-    call_action(item, method);
+    item.click_place = place;
+    switch (button) {
+        .left => if (item.props.item_is_menu) show_menu(item) else call_action(item, "Activate"),
+        .middle => call_action(item, "SecondaryActivate"),
+        .right => show_menu(item),
+        else => {},
+    }
+}
+
+
+/// Show the dbusmenu of the item in the menu program. An item without a
+/// dbusmenu gets ContextMenu, and shows its menu itself.
+fn show_menu(item: *Item) void {
+    const b = bus orelse return;
+    if (item.props.menu.len == 0 or mem.eql(u8, item.props.menu, "/")) {
+        call_action(item, "ContextMenu");
+        return;
+    }
+    const props = &item.props;
+    const title =
+        if (props.title.len > 0) props.title
+        else if (props.tooltip_title.len > 0) props.tooltip_title
+        else props.id;
+    log.debug("{s}: menu {s}", .{ item.key, props.menu });
+    tray_menu.open(b, item.service, props.menu, title, item.click_place);
 }
 
 
 fn call_action(item: *Item, method: [:0]const u8) void {
+    log.debug("{s}: {s}({}, {})", .{ item.key, method, item.click_x, item.click_y });
     item.action_slot = sd.sd_bus_slot_unref(item.action_slot);
     item.action = method;
     _ = sd.check(sd.sd_bus_call_method_async(
@@ -360,7 +384,7 @@ fn on_action(m: *sd.Message, userdata: ?*anyopaque, _: *sd.Error) callconv(.c) c
     const name = mem.span(err.name orelse "");
     // Items that cannot activate show their menu.
     if (mem.eql(u8, name, "org.freedesktop.DBus.Error.UnknownMethod") and mem.eql(u8, item.action, "Activate")) {
-        call_action(item, "ContextMenu");
+        show_menu(item);
         return 0;
     }
     log.warn("{s}: the call failed: {s}", .{ item.key, reply_error(m).? });

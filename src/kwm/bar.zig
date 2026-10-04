@@ -64,8 +64,12 @@ const max_tray_items = 32;
 
 const TrayRect = struct {
     item: *tray.Item,
+    /// The area of the item, with half of the spacing at each side.
     x0: i32,
     x1: i32,
+    /// The icon.
+    icon_x: i32,
+    icon_size: i32,
 };
 
 const WidgetRect = struct {
@@ -186,7 +190,17 @@ pub fn handle_click(self: *Self, seat: *Seat) void {
     x -= self.static_component_width();
     if (comptime build_options.tray_enabled) {
         if (self.tray_rect_at(x)) |rect| {
-            if (tray.find(rect.item)) |item| tray.click(item, seat.button, pointer_x, pointer_y);
+            const item = tray.find(rect.item) orelse return;
+            const left = utils.physics2logical(i32, self.static_component_width() + rect.icon_x, self.scale);
+            const right = utils.physics2logical(i32, self.static_component_width() + rect.icon_x + rect.icon_size, self.scale);
+            tray.click(item, seat.button, pointer_x, pointer_y, .{
+                .x = left,
+                .y = switch (ctx.cfg.bar.position) {
+                    .top => self.height(true),
+                    .bottom => self.output.height - self.height(true),
+                },
+                .right = self.output.width - right,
+            });
             return;
         }
     }
@@ -786,6 +800,8 @@ fn render_dynamic_component(self: *Self) void {
                 .item = item,
                 .x0 = item_x - @divFloor(gap, 2),
                 .x1 = item_x + size + @divFloor(gap + 1, 2),
+                .icon_x = item_x,
+                .icon_size = size,
             }) catch {};
             item_x += size + gap;
         }

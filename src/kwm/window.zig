@@ -461,12 +461,11 @@ pub fn set_border(self: *Self, width: i32, rgb: u32) void {
 
 
 /// Draw, change or remove the raised border. A window that fills the output
-/// has no border. A window with client side decorations draws its own frame,
-/// for example with a GTK theme, so it has no border either.
+/// has no border. Every other window has the same border, also a window with
+/// client side decorations.
 fn render_raised_border(self: *Self) void {
     const border = ctx.cfg.border.width;
-    const csd = (self.decoration orelse ctx.cfg.default_window_decoration) == .csd;
-    if (ctx.cfg.border.style != .raised or border <= 0 or self.fullscreen == .output or csd) {
+    if (ctx.cfg.border.style != .raised or border <= 0 or self.fullscreen == .output) {
         if (self.raised_border) |*raised| {
             raised.deinit();
             self.raised_border = null;

@@ -125,6 +125,12 @@ tray: ?struct {
     icon_theme: []const u8 = "hicolor",
     /// Show the items with the status "Passive".
     show_passive: bool = false,
+    /// The program of the menus of the items. kwm writes one row for each
+    /// menu item to its standard input, with the row options of rofi, and
+    /// reads the index of the chosen row from its standard output. kwm
+    /// replaces {title} with the name of the item, and {x}, {y} and {right}
+    /// with the place of the icon. Refer to src/kwm/tray_menu.zig.
+    menu_command: []const []const u8 = &.{ "rofi", "-dmenu", "-i", "-no-custom", "-format", "i", "-p", "{title}" },
 } = null,
 
 override_colors: []const struct {
