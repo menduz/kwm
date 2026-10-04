@@ -27,7 +27,9 @@ const Widget = config.widget.Widget;
 
 const ctx = Context.get();
 
-pub const Side = enum { center, right };
+/// `end` is at the right of the tray, at the right end of the bar.
+pub const Side = enum { center, right, end };
+const sides = std.enums.values(Side);
 
 /// The maximum number of widgets on one side.
 pub const max_widgets = 16;
@@ -53,8 +55,7 @@ pub const State = struct {
     }
 };
 
-var center_states: std.ArrayList(State) = .empty;
-var right_states: std.ArrayList(State) = .empty;
+var side_states: [sides.len]std.ArrayList(State) = .{ std.ArrayList(State).empty } ** sides.len;
 var ticking = false;
 
 
@@ -62,16 +63,14 @@ pub fn items(side: Side) []const Widget {
     const list = switch (side) {
         .center => ctx.cfg.bar.center,
         .right => ctx.cfg.bar.right,
+        .end => ctx.cfg.bar.end,
     };
     return list[0..@min(list.len, max_widgets)];
 }
 
 
 pub fn states(side: Side) []State {
-    return switch (side) {
-        .center => center_states.items,
-        .right => right_states.items,
-    };
+    return side_states[@intFromEnum(side)].items;
 }
 
 
@@ -79,17 +78,13 @@ pub fn states(side: Side) []State {
 pub fn init() void {
     clock.init();
 
-    inline for ([_]Side { .center, .right }) |side| {
-        const list = switch (side) {
-            .center => &center_states,
-            .right => &right_states,
-        };
-        list.appendNTimes(ctx.gpa, .{}, items(side).len) catch |err| {
+    for (sides) |side| {
+        side_states[@intFromEnum(side)].appendNTimes(ctx.gpa, .{}, items(side).len) catch |err| {
             log.err("allocate widget states failed: {}", .{ err });
         };
     }
 
-    if (!ticking and (center_states.items.len > 0 or right_states.items.len > 0)) {
+    if (!ticking and any_widgets()) {
         ticking = true;
         ctx.run_later(.fromMilliseconds(0), tick);
     }
@@ -97,10 +92,10 @@ pub fn init() void {
 
 
 pub fn deinit() void {
-    for (center_states.items) |*state| state.deinit();
-    for (right_states.items) |*state| state.deinit();
-    center_states.clearAndFree(ctx.gpa);
-    right_states.clearAndFree(ctx.gpa);
+    for (&side_states) |*list| {
+        for (list.items) |*state| state.deinit();
+        list.clearAndFree(ctx.gpa);
+    }
     net.deinit();
 }
 
@@ -113,15 +108,23 @@ pub fn reload() void {
 }
 
 
+fn any_widgets() bool {
+    for (side_states) |list| {
+        if (list.items.len > 0) return true;
+    }
+    return false;
+}
+
+
 fn tick(_: *Context) void {
-    if (center_states.items.len == 0 and right_states.items.len == 0) {
+    if (!any_widgets()) {
         ticking = false;
         return;
     }
 
     const now = Io.Timestamp.now(ctx.io, .awake).toMilliseconds();
     var changed = false;
-    inline for ([_]Side { .center, .right }) |side| {
+    inline for (sides) |side| {
         for (items(side), states(side)) |*item, *state| {
             if (now >= state.next_update) {
                 if (update(item, state, now)) changed = true;
@@ -206,8 +209,8 @@ fn damage_bars() void {
 /// The file descriptors of the running scripts, for poll.
 pub fn script_fds(buffer: []posix.fd_t) []posix.fd_t {
     var len: usize = 0;
-    for ([_][]State { center_states.items, right_states.items }) |list| {
-        for (list) |state| {
+    for (side_states) |list| {
+        for (list.items) |state| {
             const process = state.script orelse continue;
             if (len == buffer.len) break;
             buffer[len] = process.fd;
@@ -220,7 +223,7 @@ pub fn script_fds(buffer: []posix.fd_t) []posix.fd_t {
 
 /// Read the output of the script with this file descriptor.
 pub fn handle_script_fd(fd: posix.fd_t) void {
-    inline for ([_]Side { .center, .right }) |side| {
+    inline for (sides) |side| {
         for (items(side), states(side)) |*item, *state| {
             const process = state.script orelse continue;
             if (process.fd != fd) continue;

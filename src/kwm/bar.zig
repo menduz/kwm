@@ -769,8 +769,22 @@ fn render_dynamic_component(self: *Self) void {
     const status_fg = render_.utils.color(status_scheme.fg);
     const status_bg = render_.utils.color(status_scheme.bg);
 
-    // The tray at the right end. `tray_x` is where it starts.
-    var tray_x: u16 = w;
+    // The end widgets at the right end. `end_x` is where they start.
+    var end_x: u16 = w;
+    draw_end: {
+        var end = self.rasterize_widgets(.end, status_fg) catch |err| {
+            log.warn("<{*}> rasterize end widgets failed: {}", .{ self, err });
+            break :draw_end;
+        };
+        defer end.deinit();
+        if (end.width == 0) break :draw_end;
+
+        end_x = @intCast(@max(title_start, @as(i16, @intCast(w -| @as(u16, @intCast(end.width)) -| pad))));
+        self.draw_widgets(buffer, &end, @intCast(end_x), w, &status_bg, pad, y);
+    }
+
+    // The tray at the left of the end widgets. `tray_x` is where it starts.
+    var tray_x: u16 = end_x;
     self.tray_rects.clearRetainingCapacity();
     if (comptime build_options.tray_enabled) draw_tray: {
         const cfg = ctx.cfg.bar.tray orelse break :draw_tray;
@@ -785,10 +799,10 @@ fn render_dynamic_component(self: *Self) void {
         const gap: i32 = utils.logical2physics(i32, @intCast(cfg.spacing), self.scale);
         const n: i32 = @intCast(shown.len);
         const width: i32 = n * size + (n - 1) * gap + pad;
-        tray_x = @intCast(@max(title_start, @as(i32, w) - width));
+        tray_x = @intCast(@max(title_start, @as(i32, end_x) - width));
 
         var rect = [_]pixman.Rectangle16 {
-            .{ .x = @intCast(tray_x), .y = 0, .width = w - tray_x, .height = h },
+            .{ .x = @intCast(tray_x), .y = 0, .width = end_x - tray_x, .height = h },
         };
         _ = pixman.Image.fillRectangles(.src, buffer.image, &status_bg, 1, &rect);
 

@@ -105,6 +105,8 @@ status: ?struct {
 /// Refer to widget.zig.
 center: []const widget.Widget = &.{},
 right: []const widget.Widget = &.{},
+/// Widgets at the right of the tray, at the right end of the bar.
+end: []const widget.Widget = &.{},
 
 widget_colors: struct {
     warning: u32 = 0xffa500ff,
