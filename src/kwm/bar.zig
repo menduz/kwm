@@ -862,8 +862,8 @@ fn render_dynamic_component(self: *Self) void {
 }
 
 
-/// Draw a tray item in the square of `size` at (`x`, `y`): its pixmap, or
-/// the first letter of its name.
+/// Draw a tray item in the square of `size` at (`x`, `y`): its icon, or the
+/// first letter of its name.
 fn draw_tray_item(
     self: *Self,
     buffer: *render_.Buffer,
@@ -873,7 +873,7 @@ fn draw_tray_item(
     size: i32,
     fg: *const pixman.Color,
 ) void {
-    if (item.pixmap_image(size)) |image| {
+    if (item.icon(size)) |image| {
         draw_image(buffer, image, x, y, size);
         return;
     }

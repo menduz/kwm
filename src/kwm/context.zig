@@ -171,6 +171,7 @@ pub fn init(
     ctx.load_config();
     ctx.init_env_map();
     ctx.run_startup_cmds();
+    @import("theme.zig").init();
 
     if (comptime build_options.bar_enabled) {
         @import("widgets.zig").init();
@@ -207,6 +208,9 @@ pub fn deinit() void {
     if (comptime build_options.tray_enabled) {
         @import("tray.zig").deinit();
     }
+
+    @import("theme.zig").deinit();
+
     if (comptime build_options.bar_enabled) {
         @import("tooltip.zig").deinit();
         @import("widgets.zig").deinit();
@@ -1192,10 +1196,12 @@ fn prepare_render_windows(self: *Self) void {
         if (!window.is_visible()) {
             window.hide();
         } else {
+            window.border_focused = !self.focus_exclusive() and window == focused;
             window.set_border(
-                if (window.fullscreen == .output) 0
+                // kwm draws the raised border itself. Refer to raised_border.zig.
+                if (window.fullscreen == .output or self.cfg.border.style == .raised) 0
                 else self.cfg.border.width,
-                if (!self.focus_exclusive() and window == focused)
+                if (window.border_focused)
                     self.cfg.border.color.focus
                 else self.cfg.border.color.unfocus
             );

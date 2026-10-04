@@ -17,6 +17,8 @@ const Seat = @import("seat.zig");
 const Output = @import("output.zig");
 const Context = @import("context.zig");
 const CustomBorder = @import("custom_border.zig");
+const RaisedBorder = @import("raised_border.zig");
+const theme = @import("theme.zig");
 
 pub const Decoration = enum {
     csd,
@@ -105,6 +107,10 @@ swallowing: ?*Self = null,
 swallowed_by: ?*Self = null,
 disable_swallow: bool = false,
 swallowing_border: ?CustomBorder = null,
+/// The border of `border.style = .raised`. Refer to raised_border.zig.
+raised_border: ?RaisedBorder = null,
+/// The raised border uses the colors of the focused window.
+border_focused: bool = false,
 
 x: i32 = 0,
 y: i32 = 0,
@@ -205,6 +211,11 @@ pub fn destroy(self: *Self) void {
 
     if (comptime build_options.bar_enabled) {
         if (self.output) |output| output.bar.damage(.tags);
+    }
+
+    if (self.raised_border) |*border| {
+        border.deinit();
+        self.raised_border = null;
     }
 
     self.link.remove();
@@ -446,6 +457,46 @@ pub fn set_border(self: *Self, width: i32, rgb: u32) void {
         color.b,
         color.a,
     );
+}
+
+
+/// Draw, change or remove the raised border. A window that fills the output
+/// has no border. A window with client side decorations draws its own frame,
+/// for example with a GTK theme, so it has no border either.
+fn render_raised_border(self: *Self) void {
+    const border = ctx.cfg.border.width;
+    const csd = (self.decoration orelse ctx.cfg.default_window_decoration) == .csd;
+    if (ctx.cfg.border.style != .raised or border <= 0 or self.fullscreen == .output or csd) {
+        if (self.raised_border) |*raised| {
+            raised.deinit();
+            self.raised_border = null;
+        }
+        return;
+    }
+
+    if (self.raised_border == null) {
+        self.raised_border = undefined;
+        self.raised_border.?.init(self) catch |err| {
+            self.raised_border = null;
+            log.err("<{*}> init raised border failed: {}", .{ self, err });
+            return;
+        };
+    }
+
+    // A maximized window fills the output, less the border.
+    const width, const height = if (self.maximize)
+        .{ self.output.?.exclusive_width() - 2 * border, self.output.?.exclusive_height() - 2 * border }
+    else
+        .{ self.width, self.height };
+
+    if (self.raised_border) |*raised| {
+        raised.render(
+            width,
+            height,
+            border,
+            theme.bevel(self.border_focused),
+        );
+    }
 }
 
 
@@ -816,6 +867,8 @@ pub fn render(self: *Self) void {
         self.rwm_window.hide();
         return;
     }
+
+    self.render_raised_border();
 
     var offset_x: i32 = 0;
     var offset_y: i32 = 0;

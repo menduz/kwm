@@ -17,6 +17,7 @@ const posix = @import("posix");
 const pixman = @import("pixman");
 
 const sd = @import("sd_bus.zig");
+const icons = @import("icons.zig");
 const types = @import("types.zig");
 const Context = @import("context.zig");
 
@@ -120,6 +121,21 @@ pub const Item = struct {
         if (self.image) |image| _ = image.unref();
         self.image = null;
         self.image_source = null;
+    }
+
+    /// The icon of the item for a square of `size` physical pixels: the
+    /// icon name in the icon theme, else the pixmap. With the status
+    /// NeedsAttention, the attention icon comes first.
+    pub fn icon(self: *Item, size: i32) ?*pixman.Image {
+        const props = &self.props;
+        const attention = props.status == .needs_attention;
+        if (attention and props.attention_icon_name.len > 0) {
+            if (icons.get(props.attention_icon_name, props.icon_theme_path, size)) |image| return image;
+        }
+        if (!attention or props.attention_icon_pixmap.len == 0) {
+            if (icons.get(props.icon_name, props.icon_theme_path, size)) |image| return image;
+        }
+        return self.pixmap_image(size);
     }
 
     /// The icon from the pixmaps of the item, for a square of `size`
@@ -273,11 +289,14 @@ pub fn deinit() void {
     watcher = false;
     unique_name = "";
     bus = sd.sd_bus_flush_close_unref(bus);
+    icons.reset();
 }
 
 
 /// Start or stop the tray after a change of the configuration.
 pub fn reload() void {
+    // The icon theme can change.
+    icons.reset();
     if (ctx.cfg.bar.tray == null) deinit() else init();
     changed();
 }

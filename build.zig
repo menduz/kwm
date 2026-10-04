@@ -61,7 +61,7 @@ pub fn build(b: *std.Build) void {
     const background_enabled = b.option(bool, "background", "if enable background") orelse false;
     const bar_enabled = b.option(bool, "bar", "if enable bar") orelse true;
     // The tray is in the bar, and it links libsystemd for sd-bus.
-    const tray_enabled = bar_enabled and (b.option(bool, "tray", "if enable the system tray (needs libsystemd)") orelse false);
+    const tray_enabled = bar_enabled and (b.option(bool, "tray", "if enable the system tray (needs libsystemd, libspng and resvg)") orelse false);
     const kwim_enabled = b.option(bool, "kwim", "if to call `kwim` automatically") orelse true;
 
     const scanner = wayland.Scanner.create(b, .{});
@@ -259,6 +259,9 @@ pub fn build(b: *std.Build) void {
     }
     if (tray_enabled) {
         exe.root_module.linkSystemLibrary("libsystemd", .{});
+        // The icons of the tray: PNG and SVG.
+        exe.root_module.linkSystemLibrary("spng", .{});
+        exe.root_module.linkSystemLibrary("resvg", .{ .use_pkg_config = .no });
     }
 
     const kwm_options = b.addOptions();

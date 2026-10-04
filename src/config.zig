@@ -71,7 +71,30 @@ pub const Config = struct {
             focus: u32,
             unfocus: u32,
             swallowing: u32,
-        }
+        },
+        /// .flat: the compositor draws the border in `color.focus` or
+        /// `color.unfocus`.
+        /// .raised: kwm draws the window border style of Windows: a raised
+        /// outer edge, a raised inner edge and a band between the edges and
+        /// the window. Refer to `raised`.
+        style: enum { flat, raised } = .flat,
+        raised: struct {
+            focus: Bevel = .{ .band = 0x000080ff },
+            unfocus: Bevel = .{ .band = 0x808080ff },
+            /// Read the colors from the `@define-color` lines of gtk-3.0/gtk.css
+            /// of the current GTK theme. Each field names a color of that
+            /// file. A color that the file does not give comes from `focus`
+            /// and `unfocus` above. null: use only `focus` and `unfocus`.
+            /// Refer to theme.zig.
+            gtk_colors: ?struct {
+                face: []const u8 = "bg_color",
+                highlight: []const u8 = "light_shadow",
+                shadow: []const u8 = "dark_shadow",
+                frame: []const u8 = "borders",
+                focus_band: []const u8 = "wm_active_title",
+                unfocus_band: []const u8 = "wm_inactive_title",
+            } = .{},
+        } = .{},
     },
 
     default_layout: kwm.Layout.Type,
@@ -99,6 +122,21 @@ pub const Config = struct {
 
     window_rules: []const rule.Window,
     output_rules: []const rule.Output,
+};
+
+/// The colors of a raised border. The defaults are those of the classic
+/// scheme of Windows 98.
+pub const Bevel = struct {
+    /// The top and left line of the outer edge.
+    face: u32 = 0xc0c0c0ff,
+    /// The top and left line of the inner edge.
+    highlight: u32 = 0xffffffff,
+    /// The bottom and right line of the inner edge.
+    shadow: u32 = 0x808080ff,
+    /// The bottom and right line of the outer edge.
+    frame: u32 = 0x000000ff,
+    /// The area between the inner edge and the window.
+    band: u32 = 0xc0c0c0ff,
 };
 
 pub const default: Config = @import("default_config");
