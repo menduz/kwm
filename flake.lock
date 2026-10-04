@@ -1,0 +1,45 @@
+{
+  "nodes": {
+    "nixpkgs": {
+      "locked": {
+        "lastModified": 1789885152,
+        "narHash": "sha256-mDNo95riUw8k0MA2Btzj/OuiMcfLKofqIliLYsLbrSY=",
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "6d663c0533ff269008fb84e45930151e37c99db9",
+        "type": "github"
+      },
+      "original": {
+        "owner": "NixOS",
+        "ref": "nixos-26.05",
+        "repo": "nixpkgs",
+        "type": "github"
+      }
+    },
+    "river": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1790171129,
+        "narHash": "sha256-VScFaKC5q4QhABqPYC1wS6aqKOlhi5MK6CMczERZO5M=",
+        "ref": "main",
+        "rev": "fd5ea7fe823cda6db7411871cac600a0ebd3b154",
+        "revCount": 1788,
+        "type": "git",
+        "url": "https://codeberg.org/river/river.git"
+      },
+      "original": {
+        "ref": "main",
+        "type": "git",
+        "url": "https://codeberg.org/river/river.git"
+      }
+    },
+    "root": {
+      "inputs": {
+        "nixpkgs": "nixpkgs",
+        "river": "river"
+      }
+    }
+  },
+  "root": "root",
+  "version": 7
+}
