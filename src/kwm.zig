@@ -175,4 +175,5 @@ fn read(comptime T: type, fd: posix.fd_t) !?T {
 test {
     // The tests of the files without Wayland objects.
     _ = @import("kwm/maximize.zig");
+    _ = @import("kwm/sandbox.zig");
 }
