@@ -84,6 +84,8 @@ fullscreen: union(enum) {
     output: *Output,
 } = .none,
 maximize: bool = false,
+/// The maximized state that the client knows. Refer to sync_maximized().
+informed_maximized: bool = false,
 floating: bool = false,
 sticky: bool = false,
 hidden: bool = false,
@@ -468,11 +470,41 @@ pub fn uses_csd(self: *const Self) bool {
 
 /// The space on each side between a tiled window with client side decorations
 /// and its place in the layout. The frame of the client goes into it. A
-/// maximized or fullscreen window has no frame.
+/// maximized or fullscreen window has no frame. A tiled window that fills the
+/// output is maximized for the client, thus it has no frame either.
 fn csd_margin(self: *const Self) i32 {
     if (!self.uses_csd() or !self.managed_by_layout()) return 0;
-    if (self.maximize or self.fullscreen != .none) return 0;
+    if (self.maximize or self.fullscreen != .none or self.fills_output()) return 0;
     return ctx.cfg.border.csd_margin;
+}
+
+
+/// True when the layout gives a tiled window all of the output, for example
+/// the one window with smart_gaps, or the monocle layout with smart_gaps.
+fn fills_output(self: *const Self) bool {
+    if (!self.managed_by_layout()) return false;
+    const output = self.output orelse return false;
+    return self.x == 0 and self.y == 0
+        and self.width == output.exclusive_width()
+        and self.height == output.exclusive_height();
+}
+
+
+/// Tell the client that it is maximized when kwm maximizes it, and also when
+/// it fills the output. The client then draws no frame. The win98 GTK theme
+/// also hides the default title bar of a maximized window.
+fn sync_maximized(self: *Self) void {
+    const maximized = self.maximize or self.fills_output();
+    if (maximized == self.informed_maximized) return;
+
+    log.debug("<{*}> inform maximized: {}", .{ self, maximized });
+
+    if (maximized) {
+        self.rwm_window.informMaximized();
+    } else {
+        self.rwm_window.informUnmaximized();
+    }
+    self.informed_maximized = maximized;
 }
 
 
@@ -769,11 +801,7 @@ pub fn handle_events(self: *Self) void {
             .maximize => |flag| {
                 log.debug("<{*}> managing maximize: {}", .{ self, flag });
 
-                if (flag) {
-                    self.rwm_window.informMaximized();
-                } else {
-                    self.rwm_window.informUnmaximized();
-                }
+                // manage() tells the client, after the layout.
                 self.maximize = flag;
             },
             .move => |state| {
@@ -864,6 +892,8 @@ pub fn apply_rules(self: *Self) void {
 
 pub fn manage(self: *Self) void {
     log.debug("<{*}> managing, propose dimensions: (width: {}, height: {})", .{ self, self.width, self.height });
+
+    self.sync_maximized();
 
     if (self.geometry_undefined) {
         self.rwm_window.proposeDimensions(0, 0);
