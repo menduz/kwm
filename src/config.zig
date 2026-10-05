@@ -178,7 +178,10 @@ pub fn load(
         ctx.gpa,
         buffer.items[0..buffer.items.len-1:0],
         &diag,
-        .{.ignore_unknown_fields = true},
+        // After an error, zon frees the fields that it parsed. These fields
+        // can hold slices of `default`, which are not in the heap. Do not
+        // free them: kwm uses `default` after an error.
+        .{ .ignore_unknown_fields = true, .free_on_error = false },
     ) catch |err| {
         if (err == error.ParseZon) {
             log.err("parse configuration failed: {f}", .{ diag });
