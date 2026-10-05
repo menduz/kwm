@@ -170,3 +170,9 @@ fn read(comptime T: type, fd: posix.fd_t) !?T {
     if (nbytes != @sizeOf(T)) return null;
     return data;
 }
+
+
+test {
+    // The tests of the files without Wayland objects.
+    _ = @import("kwm/maximize.zig");
+}

@@ -104,6 +104,11 @@ stdenv.mkDerivation (finalAttrs: {
     "-Dtray=true"
   ];
 
+  # `zig build test`, with the dependencies of the build. Without --system,
+  # zig tries to download them.
+  doCheck = true;
+  zigCheckFlags = finalAttrs.zigBuildFlags;
+
   # The widget scripts find their programs. The programs of the system come
   # first, for example the systemd-inhibit of the running systemd.
   postFixup = ''

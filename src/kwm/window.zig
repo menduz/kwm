@@ -18,6 +18,8 @@ const Output = @import("output.zig");
 const Context = @import("context.zig");
 const CustomBorder = @import("custom_border.zig");
 const RaisedBorder = @import("raised_border.zig");
+const maximize_zig = @import("maximize.zig");
+const MaximizeState = maximize_zig.State;
 const theme = @import("theme.zig");
 
 pub const Decoration = enum {
@@ -84,8 +86,9 @@ fullscreen: union(enum) {
     output: *Output,
 } = .none,
 maximize: bool = false,
-/// The maximized state that the client knows. Refer to sync_maximized().
-informed_maximized: bool = false,
+/// The maximized state that the client asks for and knows. Refer to
+/// maximize.zig.
+maximize_state: MaximizeState = .{},
 floating: bool = false,
 sticky: bool = false,
 hidden: bool = false,
@@ -484,9 +487,10 @@ fn csd_margin(self: *const Self) i32 {
 fn fills_output(self: *const Self) bool {
     if (!self.managed_by_layout()) return false;
     const output = self.output orelse return false;
-    return self.x == 0 and self.y == 0
-        and self.width == output.exclusive_width()
-        and self.height == output.exclusive_height();
+    return maximize_zig.fills_area(
+        self.x, self.y, self.width, self.height,
+        output.exclusive_width(), output.exclusive_height(),
+    );
 }
 
 
@@ -494,8 +498,7 @@ fn fills_output(self: *const Self) bool {
 /// it fills the output. The client then draws no frame. The win98 GTK theme
 /// also hides the default title bar of a maximized window.
 fn sync_maximized(self: *Self) void {
-    const maximized = self.maximize or self.fills_output();
-    if (maximized == self.informed_maximized) return;
+    const maximized = self.maximize_state.sync(self.maximize, self.fills_output()) orelse return;
 
     log.debug("<{*}> inform maximized: {}", .{ self, maximized });
 
@@ -504,7 +507,6 @@ fn sync_maximized(self: *Self) void {
     } else {
         self.rwm_window.informUnmaximized();
     }
-    self.informed_maximized = maximized;
 }
 
 
@@ -709,6 +711,11 @@ pub fn handle_events(self: *Self) void {
                 }
 
                 self.apply_rules();
+
+                if (self.maximize_state.init(self.managed_by_layout())) {
+                    log.debug("<{*}> maximized at start", .{ self });
+                    self.maximize = true;
+                }
 
                 // The decoration of a window rule comes first. A client that
                 // does not use xdg-decoration (for example GTK4) gives
@@ -1266,12 +1273,16 @@ fn rwm_window_listener(rwm_window: *river.WindowV1, event: river.WindowV1.Event,
         .maximize_requested => {
             log.debug("<{*}> maximize requested", .{ window });
 
-            window.toggle_maximize(true);
+            if (window.maximize_state.request(true)) |flag| {
+                window.toggle_maximize(flag);
+            }
         },
         .unmaximize_requested => {
             log.debug("<{*}> unmaximize requested", .{ window });
 
-            window.toggle_maximize(false);
+            if (window.maximize_state.request(false)) |flag| {
+                window.toggle_maximize(flag);
+            }
         },
         .minimize_requested => {
             log.debug("<{*}> minimize requested", .{ window });
