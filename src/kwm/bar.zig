@@ -483,15 +483,15 @@ fn render_static_component(self: *Self) void {
     }
 
     const pad = self.get_pad();
+    const h: u16 = @intCast(self.height(false));
     const w: u16 = blk: {
         var width: u16 = 0;
         for (texts.items) |text| {
-            width += @intCast(render_.utils.text_width(text)+pad);
+            width += self.tag_cell_width(text, pad, h);
             self.static_splits.appendBounded(@intCast(width)) catch unreachable;
         }
         break :blk width;
     };
-    const h: u16 = @intCast(self.height(false));
 
     const buffer = self.next_buffer(.static, w, h) orelse return;
 
@@ -522,7 +522,7 @@ fn render_static_component(self: *Self) void {
 
         const is_focused = self.output.tag & tag != 0;
 
-        const tag_width: u16 = @intCast(render_.utils.text_width(text)+pad); 
+        const tag_width = self.tag_cell_width(text, pad, h);
         defer x += @intCast(tag_width);
 
         if (is_focused) {
@@ -572,12 +572,19 @@ fn render_static_component(self: *Self) void {
             buffer,
             text,
             fg,
-            x+@as(i16, @intCast(@divFloor(pad, 2))),
+            x+@as(i16, @intCast(@divFloor(tag_width - render_.utils.text_width(text), 2))),
             y,
         );
     }
 
     self.static_component.render(buffer, self.scale);
+}
+
+
+/// The width of a tag. The tag is a square: the larger of the text width with
+/// the pad and the bar height `h`.
+inline fn tag_cell_width(_: *const Self, text: *const fcft.TextRun, pad: u16, h: u16) u16 {
+    return @max(@as(u16, @intCast(render_.utils.text_width(text)+pad)), h);
 }
 
 
