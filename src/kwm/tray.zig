@@ -25,6 +25,8 @@ const Context = @import("context.zig");
 
 const ctx = Context.get();
 
+pub const Icon = icons.Icon;
+
 const watcher_name = "org.kde.StatusNotifierWatcher";
 const watcher_path = "/StatusNotifierWatcher";
 const watcher_interface = "org.kde.StatusNotifierWatcher";
@@ -71,6 +73,11 @@ pub const Item = struct {
     key: [:0]const u8,
     signal_slot: ?*sd.Slot = null,
     call_slot: ?*sd.Slot = null,
+    /// The call that gets the process of the item.
+    process_slot: ?*sd.Slot = null,
+    /// The name of the executable of the process, without the "." and the
+    /// "-wrapped" of the Nix wrappers. "": not known.
+    exe: []const u8 = "",
     /// The call of a click, and its method.
     action_slot: ?*sd.Slot = null,
     action: [:0]const u8 = "",
@@ -113,6 +120,8 @@ pub const Item = struct {
         _ = sd.sd_bus_slot_unref(self.signal_slot);
         _ = sd.sd_bus_slot_unref(self.call_slot);
         _ = sd.sd_bus_slot_unref(self.action_slot);
+        _ = sd.sd_bus_slot_unref(self.process_slot);
+        ctx.gpa.free(self.exe);
         self.drop_image();
         self.arena.deinit();
         ctx.gpa.free(self.key);
@@ -131,7 +140,7 @@ pub const Item = struct {
     /// icon name in the icon theme, else the pixmap. With the status
     /// NeedsAttention, the attention icon comes first. A symbolic icon has
     /// the color `color` (0xRRGGBBAA).
-    pub fn icon(self: *Item, size: i32, color: u32) ?*pixman.Image {
+    pub fn icon(self: *Item, size: i32, color: u32) ?Icon {
         const props = &self.props;
         const attention = props.status == .needs_attention;
         if (attention and props.attention_icon_name.len > 0) {
@@ -140,7 +149,8 @@ pub const Item = struct {
         if (!attention or props.attention_icon_pixmap.len == 0) {
             if (icons.get(props.icon_name, props.icon_theme_path, size, color)) |image| return image;
         }
-        return self.pixmap_image(size);
+        const image = self.pixmap_image(size) orelse return null;
+        return .{ .image = image, .symbolic = false };
     }
 
     /// The icon from the pixmaps of the item, for a square of `size`
@@ -178,6 +188,12 @@ pub const Item = struct {
         if (n > name.len) return "?";
         if (n == 1) return upper[std.ascii.toUpper(name[0])..][0..1];
         return name[0..n];
+    }
+
+    /// The name for the order of the items: the name of the executable, else
+    /// the id.
+    fn sort_name(self: *const Item) []const u8 {
+        return if (self.exe.len > 0) self.exe else self.props.id;
     }
 
     /// The tooltip text: the title, and on the next lines the text without
@@ -310,18 +326,41 @@ pub fn reload() void {
 }
 
 
-/// The items that the bar shows, in the order of registration: the items
-/// that gave their properties, without the passive items.
-pub fn visible_items(buffer: []*Item) []*Item {
+/// An item that the bar shows, and its icon. null: no icon.
+pub const Shown = struct {
+    item: *Item,
+    icon: ?Icon,
+};
+
+/// The items that the bar shows: the items that gave their properties,
+/// without the passive items. The icons are for a square of `size`, with
+/// the color `color` (refer to `Item.icon`). The order does not change with
+/// the order of registration: first the items without a symbolic icon, then
+/// the items with a symbolic icon. In each group, the order is by the name
+/// of the executable.
+pub fn visible_items(buffer: []Shown, size: i32, color: u32) []Shown {
     const cfg = ctx.cfg.bar.tray orelse return buffer[0..0];
     var n: usize = 0;
     for (items.items) |item| {
         if (!item.ready or n == buffer.len) continue;
         if (item.props.status == .passive and !cfg.show_passive) continue;
-        buffer[n] = item;
+        buffer[n] = .{ .item = item, .icon = item.icon(size, color) };
         n += 1;
     }
+    mem.sort(Shown, buffer[0..n], {}, shown_before);
     return buffer[0..n];
+}
+
+
+fn shown_before(_: void, a: Shown, b: Shown) bool {
+    const a_symbolic = if (a.icon) |icon| icon.symbolic else false;
+    const b_symbolic = if (b.icon) |icon| icon.symbolic else false;
+    if (a_symbolic != b_symbolic) return b_symbolic;
+    return switch (std.ascii.orderIgnoreCase(a.item.sort_name(), b.item.sort_name())) {
+        .lt => false,
+        .gt => true,
+        .eq => mem.lessThan(u8, b.item.props.id, a.item.props.id),
+    };
 }
 
 
@@ -781,6 +820,7 @@ fn add_item(registration: []const u8, sender: ?[*:0]const u8) void {
         bus.?, &item.signal_slot, item.service, item.path, item_interface, null,
         on_item_signal, null, item,
     ), "match the signals of an item") catch {};
+    get_process(item);
     get_properties(item);
 
     if (watcher) {
@@ -797,6 +837,54 @@ fn remove_item(i: usize) void {
         _ = sd.sd_bus_emit_signal(bus.?, watcher_path, watcher_interface, "StatusNotifierItemUnregistered", "s", item.key.ptr);
     }
     changed();
+}
+
+
+/// Get the process of the item from the bus, for the name of its executable.
+fn get_process(item: *Item) void {
+    _ = sd.check(sd.sd_bus_call_method_async(
+        bus.?, &item.process_slot, dbus_name, dbus_path, dbus_name, "GetConnectionUnixProcessID",
+        on_process, item, "s", item.service.ptr,
+    ), "get the process of an item") catch {};
+}
+
+
+fn on_process(m: *sd.Message, userdata: ?*anyopaque, _: *sd.Error) callconv(.c) c_int {
+    const item: *Item = @ptrCast(@alignCast(userdata.?));
+    item.process_slot = sd.sd_bus_slot_unref(item.process_slot);
+    if (reply_error(m)) |err| {
+        log.warn("get the process of {s} failed: {s}", .{ item.key, err });
+        return 0;
+    }
+    var pid: u32 = 0;
+    if (sd.sd_bus_message_read_basic(m, 'u', @ptrCast(&pid)) <= 0) return 0;
+
+    var path_buffer: [32]u8 = undefined;
+    const path = std.fmt.bufPrint(&path_buffer, "/proc/{}/exe", .{ pid }) catch return 0;
+    var exe_buffer: [Io.Dir.max_path_bytes]u8 = undefined;
+    const len = Io.Dir.readLinkAbsolute(ctx.io, path, &exe_buffer) catch |err| {
+        log.warn("read {s} of {s} failed: {}", .{ path, item.key, err });
+        return 0;
+    };
+    const exe = exe_name(exe_buffer[0..len]);
+    const owned = ctx.gpa.dupe(u8, exe) catch return 0;
+    ctx.gpa.free(item.exe);
+    item.exe = owned;
+    log.debug("{s}: executable {s}", .{ item.key, exe });
+    if (item.ready) changed();
+    return 0;
+}
+
+
+/// The name of the executable at `path`. The Nix wrappers start
+/// "dir/.name-wrapped": the name is "name".
+fn exe_name(path: []const u8) []const u8 {
+    var name = path[if (mem.lastIndexOfScalar(u8, path, '/')) |i| i + 1 else 0 ..];
+    // The kernel adds " (deleted)" after an update of the file.
+    if (mem.endsWith(u8, name, " (deleted)")) name = name[0 .. name.len - " (deleted)".len];
+    if (mem.startsWith(u8, name, ".")) name = name[1..];
+    while (mem.endsWith(u8, name, "-wrapped")) name = name[0 .. name.len - "-wrapped".len];
+    return name;
 }
 
 

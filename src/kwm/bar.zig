@@ -795,14 +795,14 @@ fn render_dynamic_component(self: *Self) void {
     self.tray_rects.clearRetainingCapacity();
     if (comptime build_options.tray_enabled) draw_tray: {
         const cfg = ctx.cfg.bar.tray orelse break :draw_tray;
-        var item_buffer: [max_tray_items]*tray.Item = undefined;
-        const shown = tray.visible_items(&item_buffer);
-        if (shown.len == 0) break :draw_tray;
-
         const bar_h: i32 = h;
         const size: i32 =
             if (cfg.icon_size > 0) @min(bar_h, utils.logical2physics(i32, @intCast(cfg.icon_size), self.scale))
             else bar_h;
+        var item_buffer: [max_tray_items]tray.Shown = undefined;
+        const shown = tray.visible_items(&item_buffer, size, status_scheme.fg);
+        if (shown.len == 0) break :draw_tray;
+
         const gap: i32 = utils.logical2physics(i32, @intCast(cfg.spacing), self.scale);
         const n: i32 = @intCast(shown.len);
         const width: i32 = n * size + (n - 1) * gap + pad;
@@ -815,10 +815,10 @@ fn render_dynamic_component(self: *Self) void {
 
         var item_x: i32 = @as(i32, tray_x) + @divFloor(pad, 2);
         const item_y: i32 = @divFloor(bar_h - size, 2);
-        for (shown) |item| {
-            self.draw_tray_item(buffer, item, item_x, item_y, size, &status_fg, status_scheme.fg);
+        for (shown) |s| {
+            self.draw_tray_item(buffer, s, item_x, item_y, size, &status_fg);
             self.tray_rects.appendBounded(.{
-                .item = item,
+                .item = s.item,
                 .x0 = item_x - @divFloor(gap, 2),
                 .x1 = item_x + size + @divFloor(gap + 1, 2),
                 .icon_x = item_x,
@@ -900,23 +900,21 @@ fn render_dynamic_component(self: *Self) void {
 
 
 /// Draw a tray item in the square of `size` at (`x`, `y`): its icon, or the
-/// first letter of its name. `fg` is the color of the text, and `fg_rgba`
-/// the same color for the symbolic icons.
+/// first letter of its name. `fg` is the color of the text.
 fn draw_tray_item(
     self: *Self,
     buffer: *render_.Buffer,
-    item: *tray.Item,
+    shown: tray.Shown,
     x: i32,
     y: i32,
     size: i32,
     fg: *const pixman.Color,
-    fg_rgba: u32,
 ) void {
-    if (item.icon(size, fg_rgba)) |image| {
-        draw_image(buffer, image, x, y, size);
+    if (shown.icon) |icon| {
+        draw_image(buffer, icon.image, x, y, size);
         return;
     }
-    const utf32 = render_.utils.to_utf8(ctx.gpa, item.letter()) catch return;
+    const utf32 = render_.utils.to_utf8(ctx.gpa, shown.item.letter()) catch return;
     defer ctx.gpa.free(utf32);
     const run = self.font.rasterize_text_run(utf32) orelse return;
     defer run.destroy();

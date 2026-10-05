@@ -76,8 +76,15 @@ const Theme = struct {
 var arena: ?std.heap.ArenaAllocator = null;
 var base_dirs: ?[]const []const u8 = null;
 var themes: std.StringHashMapUnmanaged(?*const Theme) = .empty;
-/// The images by "size/theme_path/name". null: no icon with this name.
-var images: std.StringHashMapUnmanaged(?*pixman.Image) = .empty;
+/// An image of an icon. `symbolic`: the file is symbolic, and the image has
+/// the color of the text.
+pub const Icon = struct {
+    image: *pixman.Image,
+    symbolic: bool,
+};
+
+/// The icons by "size/color/theme_path/name". null: no icon with this name.
+var images: std.StringHashMapUnmanaged(?Icon) = .empty;
 
 const max_images = 256;
 
@@ -86,22 +93,22 @@ const max_images = 256;
 /// image can be larger or smaller than `size`. `theme_path` is the
 /// IconThemePath of the item, or "". A symbolic icon has the color `color`
 /// (0xRRGGBBAA). The cache keeps the image.
-pub fn get(name: []const u8, theme_path: []const u8, size: i32, color: u32) ?*pixman.Image {
+pub fn get(name: []const u8, theme_path: []const u8, size: i32, color: u32) ?Icon {
     if (name.len == 0 or size <= 0) return null;
 
     var key_buffer: [1024]u8 = undefined;
     const key = std.fmt.bufPrint(&key_buffer, "{}/{x:0>8}/{s}/{s}", .{ size, color, theme_path, name }) catch return null;
-    if (images.get(key)) |image| return image;
+    if (images.get(key)) |icon| return icon;
 
-    const image = find(name, theme_path, size, color);
+    const icon = find(name, theme_path, size, color);
     if (images.count() >= max_images) clear_images();
-    const owned_key = ctx.gpa.dupe(u8, key) catch return image;
-    images.put(ctx.gpa, owned_key, image) catch {
+    const owned_key = ctx.gpa.dupe(u8, key) catch return icon;
+    images.put(ctx.gpa, owned_key, icon) catch {
         ctx.gpa.free(owned_key);
-        if (image) |i| _ = i.unref();
+        if (icon) |i| _ = i.image.unref();
         return null;
     };
-    return image;
+    return icon;
 }
 
 
@@ -123,7 +130,7 @@ fn clear_images() void {
     var it = images.iterator();
     while (it.next()) |entry| {
         ctx.gpa.free(entry.key_ptr.*);
-        if (entry.value_ptr.*) |image| _ = image.unref();
+        if (entry.value_ptr.*) |icon| _ = icon.image.unref();
     }
     images.clearRetainingCapacity();
 }
@@ -136,7 +143,7 @@ fn allocator() mem.Allocator {
 
 
 /// Find the file of the icon, and read it.
-fn find(name: []const u8, theme_path: []const u8, size: i32, color: u32) ?*pixman.Image {
+fn find(name: []const u8, theme_path: []const u8, size: i32, color: u32) ?Icon {
     const theme_name = if (ctx.cfg.bar.tray) |cfg| cfg.icon_theme else "hicolor";
     var path_buffer: [max_path]u8 = undefined;
     var symbolic_buffer: [256]u8 = undefined;
@@ -181,14 +188,15 @@ const symbolic_suffix = "-symbolic";
 
 
 /// Read the file of the icon `name`. A symbolic file gets the color `color`.
-fn load(name: []const u8, path: []const u8, size: i32, color: u32) ?*pixman.Image {
+fn load(name: []const u8, path: []const u8, size: i32, color: u32) ?Icon {
     var real_buffer: [max_path]u8 = undefined;
     const real = real_path(path, &real_buffer) orelse path;
     log.debug("{s} ({}): {s}", .{ name, size, real });
     const image = read(path, size) orelse return null;
     const file_name = real[if (mem.lastIndexOfScalar(u8, real, '/')) |i| i + 1 else 0 ..];
-    if (mem.indexOf(u8, file_name, symbolic_suffix) != null) recolor(image, color);
-    return image;
+    const symbolic = mem.indexOf(u8, file_name, symbolic_suffix) != null;
+    if (symbolic) recolor(image, color);
+    return .{ .image = image, .symbolic = symbolic };
 }
 
 
