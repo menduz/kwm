@@ -34,6 +34,10 @@ const sides = std.enums.values(Side);
 /// The maximum number of widgets on one side.
 pub const max_widgets = 16;
 
+/// Milliseconds before a script with interval 0 starts again, after it
+/// stopped or after it did not start.
+const restart_delay = 30_000;
+
 pub const State = struct {
     /// The text on the bar. It can have `^#RRGGBBAA` and `^#!` color codes.
     text: std.ArrayList(u8) = .empty,
@@ -149,14 +153,15 @@ fn update(item: *const Widget, state: *State, now: i64) bool {
 
     const interval: i64 = switch (item.*) {
         .script => |cfg| {
-            if (state.script == null) {
-                state.script = script.start(cfg.exec);
-                // With interval 0, start the command again 5 seconds after
-                // it stops.
-                state.next_update = now + if (cfg.interval == 0) 5000 else cfg.interval;
-            } else {
-                state.next_update = if (cfg.interval == 0) std.math.maxInt(i64) else now + cfg.interval;
-            }
+            if (state.script == null) state.script = script.start(cfg.exec);
+            // With interval 0, the command runs all the time. When it stops,
+            // handle_script_fd gives the time of the next start.
+            state.next_update = if (cfg.interval > 0)
+                now + cfg.interval
+            else if (state.script == null)
+                now + restart_delay
+            else
+                std.math.maxInt(i64);
             return false;
         },
         inline else => |cfg| cfg.interval,
@@ -310,6 +315,16 @@ pub fn handle_script_fd(fd: posix.fd_t) void {
                 log.warn("read script failed: {}", .{ err });
                 break :blk false;
             };
+            if (state.script == null and item.script.interval == 0) {
+                // The command stopped. Its last text can be old, thus hide
+                // the widget until the command starts again.
+                log.warn("script `{s}` stopped, start it again in {} s", .{ item.script.exec, restart_delay / 1000 });
+                state.next_update = Io.Timestamp.now(ctx.io, .awake).toMilliseconds() + restart_delay;
+                out.deinit();
+                out = .{ .hidden = true };
+                if (set(state, &out)) damage_bars();
+                return;
+            }
             if (new_line and set(state, &out)) damage_bars();
             return;
         }

@@ -58,7 +58,8 @@ pub const Script = clickable(struct {
     /// A shell command. Each line that it writes updates the widget.
     exec: []const u8,
     /// Milliseconds between two runs of `exec`. With 0, `exec` runs one time
-    /// and continues to write lines, and kwm starts it again when it stops.
+    /// and continues to write lines. When it stops, the widget hides, and
+    /// kwm starts it again 30 seconds later.
     interval: u32 = 0,
     /// .text: the line is the text.
     /// .json: the line is an object with "text", "tooltip" and "class", as
