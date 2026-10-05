@@ -5,6 +5,12 @@
 //! `bar.tooltip_delay` milliseconds, the next render sequence makes a shell
 //! surface below the widget. Shell surfaces change only in a manage or render
 //! sequence, so `render` makes all changes.
+//!
+//! A script widget can give a click command for each line of its tooltip.
+//! Then the tooltip stays `leave_delay` milliseconds after the pointer leaves
+//! the widget, so the pointer can go to the tooltip. The line with a command
+//! under the pointer has the inverse colors, and a left click runs the
+//! command.
 
 const std = @import("std");
 const mem = std.mem;
@@ -26,6 +32,7 @@ const Bar = @import("bar.zig");
 const tray = @import("tray.zig");
 const Output = @import("output.zig");
 const Layout = @import("layout.zig");
+const types = @import("types.zig");
 
 const ctx = Context.get();
 
@@ -103,6 +110,24 @@ var surface: ?*Surface = null;
 var generation: u64 = 0;
 var shown_generation: u64 = 0;
 
+/// Milliseconds that a tooltip with click commands stays after the pointer
+/// leaves the widget.
+const leave_delay = 300;
+/// Awake-clock milliseconds when the tooltip goes away, after the pointer
+/// left the widget. null: the pointer did not leave.
+var leave_time: ?i64 = null;
+/// The pointer is on the tooltip.
+var pointer_on = false;
+/// The line under the pointer, or null.
+var hovered: ?usize = null;
+/// The place of the lines of the tooltip that shows, in buffer pixels.
+var line_box: struct {
+    top: i32 = 0,
+    height: i32 = 1,
+    count: usize = 0,
+    scale: u32 = 120,
+} = .{};
+
 
 fn same(a: ?Target, b: ?Target) bool {
     if (a == null or b == null) return a == null and b == null;
@@ -116,18 +141,120 @@ pub fn hover(new: ?Target) void {
         // Keep the newest pointer position until the tooltip shows. Then the
         // tooltip does not move.
         if (!visible) target = new;
+        leave_time = null;
         return;
     }
+    // The pointer left the widget. Keep a tooltip with click commands for
+    // some time, so the pointer can go to it.
+    if (new == null and visible and clickable()) {
+        if (leave_time == null) {
+            leave_time = now() + leave_delay;
+            ctx.run_later(.fromMilliseconds(leave_delay), leave_later);
+        }
+        return;
+    }
+    set_target(new);
+}
+
+
+/// Remove the tooltip now.
+pub fn close() void {
+    set_target(null);
+}
+
+
+fn set_target(new: ?Target) void {
     log.debug("hover {?}", .{ if (new) |t| std.meta.activeTag(t.area) else null });
 
     target = new;
     generation += 1;
+    leave_time = null;
+    pointer_on = false;
+    hovered = null;
     if (visible) {
         visible = false;
         request_render();
     }
     if (new != null) {
-        ctx.run_later(.fromMilliseconds(ctx.cfg.bar.tooltip_delay), show_later);
+        if (ctx.cfg.bar.tooltip_delay == 0) {
+            show_later(ctx);
+        } else {
+            ctx.run_later(.fromMilliseconds(ctx.cfg.bar.tooltip_delay), show_later);
+        }
+    }
+}
+
+
+fn now() i64 {
+    return std.Io.Timestamp.now(ctx.io, .awake).toMilliseconds();
+}
+
+
+fn leave_later(_: *Context) void {
+    // The pointer came back, or it left again later.
+    const time = leave_time orelse return;
+    if (pointer_on or now() < time) return;
+    set_target(null);
+}
+
+
+/// True when `wl_surface` is the surface of the tooltip.
+pub fn is_surface(wl_surface: *wl.Surface) bool {
+    return if (surface) |s| s.wl_surface == wl_surface else false;
+}
+
+
+/// The pointer is on the tooltip at `surface_y`, in logical pixels, or it is
+/// not on the tooltip (null).
+pub fn pointer(surface_y: ?i32) void {
+    pointer_on = surface_y != null;
+    if (pointer_on) leave_time = null;
+    const line = if (surface_y) |y| line_at(y) else null;
+    if (line != hovered) {
+        hovered = line;
+        if (visible) request_render();
+    }
+}
+
+
+/// A click on the tooltip runs the command of the line under the pointer.
+pub fn click(button: types.Button) void {
+    if (button != .left or !visible) return;
+    const t = target orelse return;
+    const line = hovered orelse return;
+    const cmd = line_command(&t, line) orelse return;
+    log.debug("click line {}: {s}", .{ line, cmd });
+    ctx.spawn_shell(cmd);
+}
+
+
+fn line_at(surface_y: i32) ?usize {
+    const y = utils.logical2physics(i32, surface_y, line_box.scale) - line_box.top;
+    if (y < 0) return null;
+    const line: usize = @intCast(@divFloor(y, line_box.height));
+    return if (line < line_box.count) line else null;
+}
+
+
+/// The click command of a line of the tooltip of `t`, or null.
+fn line_command(t: *const Target, line: usize) ?[]const u8 {
+    return switch (t.area) {
+        .widget => |w| widgets.tooltip_command(w.side, w.index, line),
+        else => null,
+    };
+}
+
+
+/// True when a line of the tooltip has a click command.
+fn clickable() bool {
+    const t = target orelse return false;
+    switch (t.area) {
+        .widget => |w| {
+            const list = widgets.states(w.side);
+            if (w.index >= list.len) return false;
+            return mem.indexOfNone(u8, list[w.index].tooltip_on_click.items, "\x00") != null;
+        },
+        else => return false,
     }
 }
 
@@ -149,7 +276,7 @@ pub fn damage() void {
 
 /// The bar goes away. Forget it.
 pub fn forget(bar: *Bar) void {
-    if (target) |t| if (t.bar == bar) hover(null);
+    if (target) |t| if (t.bar == bar) close();
 }
 
 
@@ -272,9 +399,24 @@ fn draw(s: *Surface, t: *const Target, text: []const u8) !void {
     rect[0] = .{ .x = 1, .y = 1, .width = @intCast(w - 2), .height = @intCast(h - 2) };
     _ = pixman.Image.fillRectangles(.src, buffer.image, &bg, 1, &rect);
 
-    var y: i32 = @divFloor(pad, 2);
-    for (runs.items) |run| {
-        _ = font.render_text(buffer, run, &fg, pad, y);
+    const top: i32 = @divFloor(pad, 2);
+    line_box = .{
+        .top = top,
+        .height = line_height,
+        .count = runs.items.len,
+        .scale = bar.scale,
+    };
+
+    // The line under the pointer has the inverse colors, if it has a click
+    // command.
+    var y: i32 = top;
+    for (runs.items, 0..) |run, i| {
+        const selected = hovered == i and line_command(t, i) != null;
+        if (selected) {
+            rect[0] = .{ .x = 1, .y = @intCast(y), .width = @intCast(w - 2), .height = @intCast(line_height) };
+            _ = pixman.Image.fillRectangles(.src, buffer.image, &fg, 1, &rect);
+        }
+        _ = font.render_text(buffer, run, if (selected) &bg else &fg, pad, y);
         y += line_height;
     }
 

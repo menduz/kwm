@@ -64,6 +64,8 @@ pub const Script = clickable(struct {
     /// .text: the line is the text.
     /// .json: the line is an object with "text", "tooltip" and "class", as
     /// waybar reads it. The classes "warning" and "critical" select colors.
+    /// "tooltip_on_click" is a list with a shell command for each line of
+    /// the tooltip. A click on the line runs the command.
     return_type: enum { text, json } = .text,
 });
 

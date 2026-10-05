@@ -914,7 +914,7 @@ fn shell_surface_interaction(self: *Self, shell_surface: *ShellSurface) void {
             ctx.set_current_output(background.output);
             ctx.dismiss_tray_menu();
         } else unreachable,
-        .tooltip => {},
+        .tooltip => if (comptime build_options.bar_enabled) tooltip.click(self.button),
     }
 
     self.has_pointer_interaction = true;
@@ -1197,6 +1197,10 @@ fn widget_under_pointer(self: *const Self) ?tooltip.Target {
 
 fn hover_widget(self: *const Self) void {
     if (comptime build_options.bar_enabled) {
+        if (self.pointer_surface) |surface| if (tooltip.is_surface(surface)) {
+            return tooltip.pointer(self.pointer_surface_y);
+        };
+        tooltip.pointer(null);
         tooltip.hover(self.widget_under_pointer());
     }
 }

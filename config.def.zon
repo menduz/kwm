@@ -143,6 +143,8 @@
         // .on_click_middle, .on_scroll_up and .on_scroll_down (shell commands)
         // script widgets read JSON lines with "text", "tooltip" and "class", as waybar custom
         // modules; the classes "warning" and "critical" give a color, "blink" flashes the widget
+        // "tooltip_on_click" (not in waybar) is a list with a shell command for each tooltip line;
+        // a click on the line runs it, and the tooltip stays while the pointer goes to it
         // the kwm-* scripts are in contrib/, and zig build installs them
         .center = .{
             // a click starts btop
@@ -169,7 +171,7 @@
             .warning = 0xffb354ff,
             .critical = 0xff3333ff,
         },
-        // milliseconds before the tooltip of a widget shows
+        // milliseconds before the tooltip of a widget shows, 0: at once
         .tooltip_delay = 500,
 
         // the system tray (StatusNotifierItem), kwm must be built with -Dtray=true

@@ -43,6 +43,8 @@ pub const State = struct {
     text: std.ArrayList(u8) = .empty,
     /// The text of the tooltip. Lines are separated by '\n'.
     tooltip: std.ArrayList(u8) = .empty,
+    /// The click commands of the tooltip lines. Refer to `common.Output`.
+    tooltip_on_click: std.ArrayList(u8) = .empty,
     hidden: bool = false,
     /// The widget flashes. Refer to `text`.
     blink: bool = false,
@@ -61,6 +63,7 @@ pub const State = struct {
         self.text.deinit(ctx.gpa);
         self.plain.deinit(ctx.gpa);
         self.tooltip.deinit(ctx.gpa);
+        self.tooltip_on_click.deinit(ctx.gpa);
     }
 };
 
@@ -189,7 +192,8 @@ fn set(state: *State, out: *const common.Output) bool {
     if (state.hidden == out.hidden
         and state.blink == out.blink
         and mem.eql(u8, state.text.items, out.text.items)
-        and mem.eql(u8, state.tooltip.items, out.tooltip.items)) return false;
+        and mem.eql(u8, state.tooltip.items, out.tooltip.items)
+        and mem.eql(u8, state.tooltip_on_click.items, out.tooltip_on_click.items)) return false;
 
     state.hidden = out.hidden;
     state.blink = out.blink;
@@ -199,6 +203,8 @@ fn set(state: *State, out: *const common.Output) bool {
     strip_colors(&state.plain, out.text.items) catch return false;
     state.tooltip.clearRetainingCapacity();
     state.tooltip.appendSlice(ctx.gpa, out.tooltip.items) catch return false;
+    state.tooltip_on_click.clearRetainingCapacity();
+    state.tooltip_on_click.appendSlice(ctx.gpa, out.tooltip_on_click.items) catch return false;
     if (state.blink and !state.hidden) start_blinking();
     return true;
 }
@@ -351,6 +357,19 @@ pub fn click(side: Side, index: usize, button: types.Button) void {
         else => null,
     } orelse return;
     ctx.spawn_shell(cmd);
+}
+
+
+/// The click command of line `line` of the tooltip of a widget, or null.
+pub fn tooltip_command(side: Side, index: usize, line: usize) ?[]const u8 {
+    const list = states(side);
+    if (index >= list.len or list[index].hidden) return null;
+    var it = mem.splitScalar(u8, list[index].tooltip_on_click.items, 0);
+    var i: usize = 0;
+    while (it.next()) |cmd| : (i += 1) {
+        if (i == line) return if (cmd.len == 0) null else cmd;
+    }
+    return null;
 }
 
 

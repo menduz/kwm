@@ -15,6 +15,9 @@ pub const Output = struct {
     text: std.ArrayList(u8) = .empty,
     /// The text of the tooltip. Lines are separated by '\n'.
     tooltip: std.ArrayList(u8) = .empty,
+    /// The click commands of the tooltip lines, separated by '\x00'. The
+    /// command of line N is item N. An empty item: the line has no command.
+    tooltip_on_click: std.ArrayList(u8) = .empty,
     hidden: bool = false,
     /// The widget flashes: its text changes between its colors and the
     /// color of the bar text.
@@ -23,6 +26,7 @@ pub const Output = struct {
     pub fn deinit(self: *Output) void {
         self.text.deinit(ctx.gpa);
         self.tooltip.deinit(ctx.gpa);
+        self.tooltip_on_click.deinit(ctx.gpa);
     }
 };
 

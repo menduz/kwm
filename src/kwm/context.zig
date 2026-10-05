@@ -387,7 +387,7 @@ pub fn reload_config(self: *Self) void {
     if (comptime build_options.bar_enabled) {
         if (mask.bar) {
             self.stop_listening_status();
-            @import("tooltip.zig").hover(null);
+            @import("tooltip.zig").close();
             @import("widgets.zig").reload();
             if (comptime build_options.tray_enabled) @import("tray.zig").reload();
 

@@ -114,6 +114,7 @@ widget_colors: struct {
 } = .{},
 
 /// Milliseconds that the pointer stays on a widget before its tooltip shows.
+/// With 0, the tooltip shows at once.
 tooltip_delay: u32 = 500,
 
 /// The system tray (StatusNotifierItem), at the right end of the bar. null:

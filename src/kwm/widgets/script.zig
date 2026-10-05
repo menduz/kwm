@@ -1,6 +1,10 @@
 //! Script widget: the output of a shell command, as a waybar custom module.
 //! Each line that the command writes is the new text, or a JSON object with
 //! "text", "tooltip" and "class".
+//!
+//! "tooltip_on_click" is not in waybar: a list with a shell command for each
+//! line of the tooltip. A click on the line runs its command. An empty string
+//! or null: the line has no command.
 
 const std = @import("std");
 const mem = std.mem;
@@ -161,6 +165,15 @@ fn parse(cfg: anytype, line: []const u8, out: *common.Output) !void {
             };
             if (object.get("tooltip")) |value| if (value == .string) {
                 try out.tooltip.appendSlice(ctx.gpa, value.string);
+            };
+            if (object.get("tooltip_on_click")) |value| if (value == .array) {
+                for (value.array.items, 0..) |cmd, i| {
+                    if (i > 0) try out.tooltip_on_click.append(ctx.gpa, 0);
+                    // A NUL in a command would separate two items.
+                    if (cmd == .string and mem.indexOfScalar(u8, cmd.string, 0) == null) {
+                        try out.tooltip_on_click.appendSlice(ctx.gpa, cmd.string);
+                    }
+                }
             };
         },
     }
