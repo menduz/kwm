@@ -1211,9 +1211,11 @@ fn prepare_render_windows(self: *Self) void {
                 // kwm draws the raised border itself. Refer to raised_border.zig.
                 if (window.fullscreen == .output or self.cfg.border.style == .raised) 0
                 else self.cfg.border.width,
-                if (window.border_focused)
-                    self.cfg.border.color.focus
-                else self.cfg.border.color.unfocus
+                window.border_color(
+                    if (window.border_focused)
+                        self.cfg.border.color.focus
+                    else self.cfg.border.color.unfocus
+                ),
             );
         }
     }

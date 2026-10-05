@@ -17,9 +17,14 @@ const Context = @import("context.zig");
 
 const ctx = Context.get();
 
-var gtk_theme: ?[]u8 = null;
 /// The colors of gtk.css, by name, as 0xRRGGBBAA.
-var colors: std.StringHashMapUnmanaged(u32) = .empty;
+const Colors = std.StringHashMapUnmanaged(u32);
+
+var gtk_theme: ?[]u8 = null;
+var colors: Colors = .empty;
+/// The colors of other GTK themes, by theme name. The window of a sandbox
+/// can have its own GTK_THEME. Refer to sandbox.zig.
+var other_themes: std.StringHashMapUnmanaged(Colors) = .empty;
 
 
 pub fn init() void {
@@ -29,12 +34,18 @@ pub fn init() void {
     if (name.len == 0) return;
 
     gtk_theme = ctx.gpa.dupe(u8, name) catch return;
-    load(name);
+    load(&colors, name);
 }
 
 
 pub fn deinit() void {
-    clear_colors();
+    clear_colors(&colors);
+    var it = other_themes.iterator();
+    while (it.next()) |entry| {
+        clear_colors(entry.value_ptr);
+        ctx.gpa.free(entry.key_ptr.*);
+    }
+    other_themes.deinit(ctx.gpa);
     if (gtk_theme) |name| ctx.gpa.free(name);
     gtk_theme = null;
 }
@@ -53,39 +64,67 @@ pub fn set_gtk_theme(name: []const u8) void {
     if (gtk_theme) |old| ctx.gpa.free(old);
     gtk_theme = copy;
 
-    load(name);
+    load(&colors, name);
     ctx.rwm.manageDirty();
 }
 
 
 /// The colors of a raised border for the current GTK theme.
 pub fn bevel(focused: bool) config.Bevel {
+    return bevel_of(null, focused);
+}
+
+
+/// The colors of a raised border for the GTK theme `name`. null: the current
+/// GTK theme.
+pub fn bevel_of(name: ?[]const u8, focused: bool) config.Bevel {
     const raised = &ctx.cfg.border.raised;
     var result = if (focused) raised.focus else raised.unfocus;
 
     const names = raised.gtk_colors orelse return result;
-    result.face = colors.get(names.face) orelse result.face;
-    result.highlight = colors.get(names.highlight) orelse result.highlight;
-    result.shadow = colors.get(names.shadow) orelse result.shadow;
-    result.frame = colors.get(names.frame) orelse result.frame;
-    if (if (focused) names.focus_outline else names.unfocus_outline) |name| {
-        result.outline = colors.get(name) orelse result.outline;
+    const map = colors_of(name);
+    result.face = map.get(names.face) orelse result.face;
+    result.highlight = map.get(names.highlight) orelse result.highlight;
+    result.shadow = map.get(names.shadow) orelse result.shadow;
+    result.frame = map.get(names.frame) orelse result.frame;
+    if (if (focused) names.focus_outline else names.unfocus_outline) |color_name| {
+        result.outline = map.get(color_name) orelse result.outline;
     }
     return result;
 }
 
 
-fn clear_colors() void {
-    var it = colors.keyIterator();
-    while (it.next()) |key| ctx.gpa.free(key.*);
-    colors.clearAndFree(ctx.gpa);
+/// The colors of the GTK theme `name`. kwm reads a theme other than the
+/// current theme one time, and keeps its colors.
+fn colors_of(name: ?[]const u8) *const Colors {
+    const theme_name = name orelse return &colors;
+    if (gtk_theme) |current| {
+        if (mem.eql(u8, current, theme_name)) return &colors;
+    }
+    if (other_themes.getPtr(theme_name)) |map| return map;
+
+    const owned = ctx.gpa.dupe(u8, theme_name) catch return &colors;
+    const entry = other_themes.getOrPut(ctx.gpa, owned) catch {
+        ctx.gpa.free(owned);
+        return &colors;
+    };
+    entry.value_ptr.* = .empty;
+    load(entry.value_ptr, theme_name);
+    return entry.value_ptr;
 }
 
 
-/// Read the colors of the theme `name`. Without a theme file, the borders
-/// use `focus` and `unfocus` of the configuration.
-fn load(name: []const u8) void {
-    clear_colors();
+fn clear_colors(map: *Colors) void {
+    var it = map.keyIterator();
+    while (it.next()) |key| ctx.gpa.free(key.*);
+    map.clearAndFree(ctx.gpa);
+}
+
+
+/// Read the colors of the theme `name` into `map`. Without a theme file, the
+/// borders use `focus` and `unfocus` of the configuration.
+fn load(map: *Colors, name: []const u8) void {
+    clear_colors(map);
 
     var buffer: [256 * 1024]u8 = undefined;
     const css = read_theme_css(name, &buffer) orelse {
@@ -105,14 +144,14 @@ fn load(name: []const u8) void {
         const color = parse_hex(value) orelse continue;
 
         const owned = ctx.gpa.dupe(u8, key) catch continue;
-        const entry = colors.getOrPut(ctx.gpa, owned) catch {
+        const entry = map.getOrPut(ctx.gpa, owned) catch {
             ctx.gpa.free(owned);
             continue;
         };
         if (entry.found_existing) ctx.gpa.free(owned);
         entry.value_ptr.* = color;
     }
-    log.info("GTK theme {s}: {} colors", .{ name, colors.count() });
+    log.info("GTK theme {s}: {} colors", .{ name, map.count() });
 }
 
 

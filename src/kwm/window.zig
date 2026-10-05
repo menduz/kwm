@@ -21,6 +21,7 @@ const RaisedBorder = @import("raised_border.zig");
 const maximize_zig = @import("maximize.zig");
 const MaximizeState = maximize_zig.State;
 const theme = @import("theme.zig");
+const sandbox = @import("sandbox.zig");
 
 pub const Decoration = enum {
     csd,
@@ -103,6 +104,12 @@ tag: u32 = 1,
 pid: i32 = 0,
 app_id: ?[]const u8 = null,
 title: ?[]const u8 = null,
+/// The sandbox of the client, from its environment. null: no sandbox. Refer
+/// to sandbox.zig.
+sandbox_name: ?[]const u8 = null,
+sandbox_color: u32 = sandbox.default_color,
+/// The GTK theme of the sandbox. The raised border uses its colors.
+sandbox_gtk_theme: ?[]const u8 = null,
 parent: ?*Self = null,
 decoration: ?Decoration = null,
 decoration_hint: river.WindowV1.DecorationHint = .no_preference,
@@ -222,6 +229,7 @@ pub fn destroy(self: *Self) void {
         border.deinit();
         self.raised_border = null;
     }
+    self.clear_sandbox();
 
     self.link.remove();
     self.flink.remove();
@@ -549,7 +557,7 @@ fn render_raised_border(self: *Self) void {
     // margin and in the border. kwm draws only the outline around it, in the
     // same place as the outline of a window with a raised border.
     if (csd) {
-        const bevel = theme.bevel(self.border_focused);
+        const bevel = self.border_bevel();
         if (self.raised_border) |*raised| {
             raised.render(
                 @max(self.width - 2 * margin, self.min_width),
@@ -572,9 +580,59 @@ fn render_raised_border(self: *Self) void {
             width,
             height,
             border,
-            theme.bevel(self.border_focused),
+            self.border_bevel(),
         );
     }
+}
+
+
+/// The colors of the raised border. The window of a sandbox uses the GTK
+/// theme of the sandbox, and has an outline in the color of the sandbox.
+fn border_bevel(self: *const Self) config.Bevel {
+    if (self.sandbox_name == null) return theme.bevel(self.border_focused);
+
+    var bevel = theme.bevel_of(self.sandbox_gtk_theme, self.border_focused);
+    bevel.outline = self.border_color(bevel.outline);
+    return bevel;
+}
+
+
+/// The border color of the window. The window of a sandbox has the color of
+/// the sandbox, dim when the window does not have the focus. Other windows
+/// have `color`.
+pub fn border_color(self: *const Self, color: u32) u32 {
+    if (self.sandbox_name == null) return color;
+    return if (self.border_focused) self.sandbox_color else sandbox.dim(self.sandbox_color);
+}
+
+
+/// Read the sandbox of the client from its environment. Refer to sandbox.zig.
+fn read_sandbox(self: *Self) void {
+    self.clear_sandbox();
+
+    var buffer: [sandbox.buffer_size]u8 = undefined;
+    const info = sandbox.read(self.pid, &buffer) orelse return;
+
+    log.debug("<{*}> sandbox: {s}, color: 0x{x}", .{ self, info.name, info.color });
+
+    self.sandbox_name = ctx.gpa.dupe(u8, info.name) catch return;
+    self.sandbox_color = info.color;
+    if (info.gtk_theme) |name| {
+        self.sandbox_gtk_theme = ctx.gpa.dupe(u8, name) catch null;
+    }
+
+    if (comptime build_options.bar_enabled) {
+        if (self.output) |output| output.bar.damage(.title);
+    }
+}
+
+
+fn clear_sandbox(self: *Self) void {
+    if (self.sandbox_name) |name| ctx.gpa.free(name);
+    if (self.sandbox_gtk_theme) |name| ctx.gpa.free(name);
+    self.sandbox_name = null;
+    self.sandbox_gtk_theme = null;
+    self.sandbox_color = sandbox.default_color;
 }
 
 
@@ -1337,6 +1395,7 @@ fn rwm_window_listener(rwm_window: *river.WindowV1, event: river.WindowV1.Event,
             log.debug("<{*}> unreliable pid: {}", .{ window, data.unreliable_pid });
 
             window.pid = data.unreliable_pid;
+            window.read_sandbox();
         },
         .presentation_hint => |data| {
             log.debug("<{*}> presentation_hint: {s}", .{ window, @tagName(data.hint) });
