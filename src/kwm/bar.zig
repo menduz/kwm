@@ -411,15 +411,42 @@ fn draw_box(
 ) void {
     // The box is at the corner of the text, not of the bar.
     const h: i32 = self.font.height();
-    const box_size: u16 = @intCast(@divFloor(h, 6) + 2);
+    const box_size = self.get_box_size();
     const box_offset: i16 = @intCast(@divFloor(h, 9));
+    self.fill_box(
+        buffer,
+        inner,
+        c,
+        x + box_offset,
+        switch (pos) {
+            .top => y + 1,
+            .bottom => y + @as(i16, @intCast(h - box_size - 1)),
+        },
+    );
+}
+
+
+/// The size of a box. The size comes from the font height.
+inline fn get_box_size(self: *const Self) u16 {
+    return @intCast(@divFloor(self.font.height(), 6) + 2);
+}
+
+
+/// Fill a box with its top-left pixel at (`x`, `y`). If `inner` is true, fill
+/// only the inner area, 1 pixel smaller on each side.
+fn fill_box(
+    self: *const Self,
+    buffer: *render_.Buffer,
+    inner: bool,
+    c: *const pixman.Color,
+    x: i16,
+    y: i16,
+) void {
+    const box_size = self.get_box_size();
     var box = [_]pixman.Rectangle16 {
         .{
-            .x = x + box_offset,
-            .y = switch (pos) {
-                .top => y + 1,
-                .bottom => y + @as(i16, @intCast(h - box_size - 1)),
-            },
+            .x = x,
+            .y = y,
             .width = box_size,
             .height = box_size,
         }
@@ -543,24 +570,23 @@ fn render_static_component(self: *Self) void {
             );
         }
 
+        // The box is at the top-left pixel of the tag cell, not of the text.
         if (windows_tag & tag != 0) {
-            self.draw_box(
+            self.fill_box(
                 buffer,
                 false,
-                .top,
                 if (is_focused) &select_fg else &normal_fg,
                 x,
-                y,
+                0,
             );
 
             if (focused_window == null or focused_window.?.tag & tag == 0) {
-                self.draw_box(
+                self.fill_box(
                     buffer,
                     true,
-                    .top,
                     if (is_focused) &select_bg else &normal_bg,
                     x,
-                    y,
+                    0,
                 );
             }
         }
