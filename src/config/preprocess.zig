@@ -122,13 +122,58 @@ pub fn preprocess(
                 const contents = try dir.readFileAlloc(ctx.io, line[begin+1..line.len-2], ctx.gpa, .unlimited);
                 defer ctx.gpa.free(contents);
 
-                try result.appendSlice(ctx.gpa, contents);
-            } else try result.appendSlice(ctx.gpa, line);
+                try append_colors(ctx.gpa, &result, contents);
+            } else try append_colors(ctx.gpa, &result, line);
         }
     } else |err| if (err != error.EndOfStream) return err;
 
     try result.append(ctx.gpa, 0);
     return result;
+}
+
+
+/// Add `text` to `result`, with the color strings as integers: the field
+/// value "#rrggbbaa" becomes 0xrrggbbaa, and "#rrggbb" becomes 0xrrggbbff.
+/// Only a string after `=` changes, and not in a `//` comment.
+fn append_colors(gpa: mem.Allocator, result: *std.ArrayList(u8), text: []const u8) !void {
+    var i: usize = 0;
+    var comment = false;
+    var after_equal = false;
+    while (i < text.len) {
+        const c = text[i];
+        if (c == '\n') {
+            comment = false;
+        } else if (!comment and mem.startsWith(u8, text[i..], "//")) {
+            comment = true;
+        } else if (!comment and after_equal and c == '"') {
+            if (color(text[i..])) |digits| {
+                try result.appendSlice(gpa, "0x");
+                try result.appendSlice(gpa, digits);
+                if (digits.len == 6) try result.appendSlice(gpa, "ff");
+                i += digits.len + 3;
+                after_equal = false;
+                continue;
+            }
+        }
+        if (c == '=') {
+            after_equal = true;
+        } else if (c != ' ' and c != '\t' and c != '\n' and c != '\r') {
+            after_equal = false;
+        }
+        try result.append(gpa, c);
+        i += 1;
+    }
+}
+
+
+/// The hex digits of `"#rrggbb"` or `"#rrggbbaa"` at the start of `text`.
+fn color(text: []const u8) ?[]const u8 {
+    if (text.len < 2 or text[1] != '#') return null;
+    var end: usize = 2;
+    while (end < text.len and std.ascii.isHex(text[end])) : (end += 1) {}
+    if (end >= text.len or text[end] != '"') return null;
+    const digits = text[2..end];
+    return if (digits.len == 6 or digits.len == 8) digits else null;
 }
 
 

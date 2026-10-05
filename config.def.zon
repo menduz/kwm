@@ -1,4 +1,7 @@
 .{
+    // colors are 0xRRGGBBAA integers; the strings "#RRGGBBAA" and "#RRGGBB" (alpha ff) also work
+    // as field values
+
     // environment variables
     // used by processes spawned by kwm
     .env = .{
