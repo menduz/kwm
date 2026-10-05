@@ -108,6 +108,16 @@ pub const Config = struct {
         } = .{},
     },
 
+    /// The windows of a sandbox. A sandbox launcher sets SANDBOX_NAME and
+    /// SANDBOX_COLOR in the environment of a program. kwm then shows the
+    /// name in the bar, and draws the border in the color of the sandbox.
+    /// Refer to sandbox.zig.
+    sandbox: struct {
+        /// Show a label with the name of the sandbox at the top right corner
+        /// of each window of a sandbox.
+        label: bool = true,
+    } = .{},
+
     default_layout: kwm.Layout.Type,
     layout: kwm.Layout,
 

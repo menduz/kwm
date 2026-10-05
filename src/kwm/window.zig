@@ -22,6 +22,7 @@ const maximize_zig = @import("maximize.zig");
 const MaximizeState = maximize_zig.State;
 const theme = @import("theme.zig");
 const sandbox = @import("sandbox.zig");
+const SandboxLabel = if (build_options.bar_enabled) @import("sandbox_label.zig") else void;
 
 pub const Decoration = enum {
     csd,
@@ -110,6 +111,11 @@ sandbox_name: ?[]const u8 = null,
 sandbox_color: u32 = sandbox.default_color,
 /// The GTK theme of the sandbox. The raised border uses its colors.
 sandbox_gtk_theme: ?[]const u8 = null,
+/// The label of `sandbox.label`. Refer to sandbox_label.zig.
+sandbox_label: if (build_options.bar_enabled) ?SandboxLabel else void =
+    if (build_options.bar_enabled) null else {},
+/// The width that river gives in the last dimensions event.
+content_width: i32 = 0,
 parent: ?*Self = null,
 decoration: ?Decoration = null,
 decoration_hint: river.WindowV1.DecorationHint = .no_preference,
@@ -229,6 +235,7 @@ pub fn destroy(self: *Self) void {
         border.deinit();
         self.raised_border = null;
     }
+    self.remove_sandbox_label();
     self.clear_sandbox();
 
     self.link.remove();
@@ -636,6 +643,40 @@ fn clear_sandbox(self: *Self) void {
 }
 
 
+/// Draw, move or remove the label of the sandbox. A fullscreen window has
+/// no label.
+fn render_sandbox_label(self: *Self) void {
+    if (comptime !build_options.bar_enabled) return;
+
+    const name = self.sandbox_name orelse return self.remove_sandbox_label();
+    const output = self.output orelse return self.remove_sandbox_label();
+    if (!ctx.cfg.sandbox.label or self.fullscreen != .none or self.content_width <= 0) {
+        return self.remove_sandbox_label();
+    }
+
+    if (self.sandbox_label == null) {
+        self.sandbox_label = undefined;
+        self.sandbox_label.?.init(self) catch |err| {
+            self.sandbox_label = null;
+            log.err("<{*}> init sandbox label failed: {}", .{ self, err });
+            return;
+        };
+    }
+
+    self.sandbox_label.?.render(&output.bar, name, self.sandbox_color, self.border_focused, self.content_width);
+}
+
+
+fn remove_sandbox_label(self: *Self) void {
+    if (comptime !build_options.bar_enabled) return;
+
+    if (self.sandbox_label) |*label| {
+        label.deinit();
+        self.sandbox_label = null;
+    }
+}
+
+
 pub fn ensure_floating(self: *Self) void {
     if (self.output) |output| {
         if (output.current_layout() == .float) return;
@@ -1016,6 +1057,7 @@ pub fn render(self: *Self) void {
     }
 
     self.render_raised_border();
+    self.render_sandbox_label();
 
     var offset_x: i32 = 0;
     var offset_y: i32 = 0;
@@ -1268,6 +1310,8 @@ fn rwm_window_listener(rwm_window: *river.WindowV1, event: river.WindowV1.Event,
         },
         .dimensions => |data| {
             log.debug("<{*}> dimensions: ({}, {})", .{ window, data.width, data.height });
+
+            window.content_width = data.width;
 
             if (
                 window.geometry_undefined

@@ -311,6 +311,14 @@
         },
     },
 
+    // the windows of a sandbox: a program with SANDBOX_NAME (and SANDBOX_COLOR="#rrggbb")
+    // in its environment; the bar shows the name before the title, and the border has
+    // the color of the sandbox
+    .sandbox = .{
+        // a label with the name at the top right corner of the window
+        .label = true,
+    },
+
     // .tile
     // .grid
     // .monocle
