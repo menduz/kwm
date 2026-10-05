@@ -278,11 +278,16 @@
             .unfocus = 0x34373aff,
             .swallowing = 0xff3333ff,
         },
+        // the space on each side between a tiled window with client side decorations
+        // and its place in the layout; the frame of the client goes into it and into the
+        // border; with .raised and a value more than 0, kwm draws only the outline around
+        // such a window (a GTK frame of 4 pixels has its edges in a border of 3 with 2)
+        .csd_margin = 0,
         // .flat: one color, drawn by river
         // .raised: the 3D window border of Windows 9x, drawn by kwm with the colors below;
         // a border of 3 pixels or more has an outline of 1 pixel outside the edges
         // (transparent: no outline); a window with client side decorations draws its
-        // own frame, so kwm does not draw a border around it
+        // own frame, so kwm draws only the outline around it (refer to .csd_margin)
         .style = .flat,
         .raised = .{
             .focus = .{ .face = 0xc0c0c0ff, .highlight = 0xffffffff, .shadow = 0x808080ff, .frame = 0x000000ff, .outline = 0x000080ff },

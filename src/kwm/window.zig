@@ -466,6 +466,16 @@ pub fn uses_csd(self: *const Self) bool {
 }
 
 
+/// The space on each side between a tiled window with client side decorations
+/// and its place in the layout. The frame of the client goes into it. A
+/// maximized or fullscreen window has no frame.
+fn csd_margin(self: *const Self) i32 {
+    if (!self.uses_csd() or !self.managed_by_layout()) return 0;
+    if (self.maximize or self.fullscreen != .none) return 0;
+    return ctx.cfg.border.csd_margin;
+}
+
+
 /// The space around a maximized window. A client with its own decorations
 /// draws no frame when it is maximized, so with the raised style it fills
 /// the output.
@@ -478,10 +488,13 @@ fn maximize_border(self: *const Self) i32 {
 /// Draw, change or remove the raised border. A window that fills the output
 /// has no border. A window with client side decorations draws its own frame
 /// outside its geometry, in the space of the border (for example the GTK
-/// theme), so it has no border either.
+/// theme). When it is tiled and `border.csd_margin` is more than 0, it gets
+/// only the outline. Else it has no border.
 fn render_raised_border(self: *Self) void {
     const border = ctx.cfg.border.width;
-    if (ctx.cfg.border.style != .raised or border <= 0 or self.fullscreen == .output or self.uses_csd()) {
+    const csd = self.uses_csd();
+    const margin = self.csd_margin();
+    if (ctx.cfg.border.style != .raised or border <= 0 or self.fullscreen == .output or (csd and margin <= 0)) {
         if (self.raised_border) |*raised| {
             raised.deinit();
             self.raised_border = null;
@@ -496,6 +509,22 @@ fn render_raised_border(self: *Self) void {
             log.err("<{*}> init raised border failed: {}", .{ self, err });
             return;
         };
+    }
+
+    // A tiled window with client side decorations draws its frame in the
+    // margin and in the border. kwm draws only the outline around it, in the
+    // same place as the outline of a window with a raised border.
+    if (csd) {
+        const bevel = theme.bevel(self.border_focused);
+        if (self.raised_border) |*raised| {
+            raised.render(
+                @max(self.width - 2 * margin, self.min_width),
+                @max(self.height - 2 * margin, self.min_height),
+                border + margin,
+                .{ .face = 0, .highlight = 0, .shadow = 0, .frame = 0, .outline = bevel.outline },
+            );
+        }
+        return;
     }
 
     // A maximized window fills the output, less the border.
@@ -857,6 +886,11 @@ pub fn manage(self: *Self) void {
                 height = @max(height - 2*ctx.cfg.border.width, self.min_height);
             }
         }
+        const margin = self.csd_margin();
+        if (margin > 0) {
+            width = @max(width - 2*margin, self.min_width);
+            height = @max(height - 2*margin, self.min_height);
+        }
         break :blk .{ width, height };
     };
 
@@ -909,6 +943,9 @@ pub fn render(self: *Self) void {
         self.rwm_window.show();
         return;
     }
+
+    offset_x += self.csd_margin();
+    offset_y += self.csd_margin();
 
     log.debug("<{*}> rendering to (x: {}, y: {})", .{ self, self.x, self.y });
 

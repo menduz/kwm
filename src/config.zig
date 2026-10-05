@@ -72,13 +72,21 @@ pub const Config = struct {
             unfocus: u32,
             swallowing: u32,
         },
+        /// The space on each side between a tiled window with client side
+        /// decorations and its place in the layout. The client draws its
+        /// frame outside its geometry, in this space and in the border. With
+        /// the raised style and a value more than 0, kwm draws the outline
+        /// of the border around such a window, and no edges. Example: a GTK
+        /// frame of 4 pixels has its two edges in a border of 3 pixels with
+        /// a margin of 2.
+        csd_margin: i32 = 0,
         /// .flat: the compositor draws the border in `color.focus` or
         /// `color.unfocus`.
         /// .raised: kwm draws the window border style of Windows: a raised
         /// outer edge and a raised inner edge, with an outline of 1 pixel
         /// outside them when the border is 3 pixels or more. Refer to `raised`.
         /// A window with client side decorations draws its own frame, thus
-        /// kwm does not draw a border around it.
+        /// kwm draws only the outline around it. Refer to `csd_margin`.
         style: enum { flat, raised } = .flat,
         raised: struct {
             focus: Bevel = .{ .outline = 0x000080ff },
