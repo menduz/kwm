@@ -18,6 +18,7 @@ const mvzr = @import("mvzr");
 const utils = @import("utils.zig");
 const types = @import("types.zig");
 const render_ = @import("render.zig");
+const sandbox = @import("sandbox.zig");
 const binding = @import("binding.zig");
 const Context = @import("context.zig");
 const Seat = @import("seat.zig");
@@ -776,6 +777,27 @@ fn render_dynamic_component(self: *Self) void {
                 x,
                 y,
             );
+        }
+
+        // The window of a sandbox: the name of the sandbox in the color of
+        // the sandbox, before the title. Refer to sandbox.zig.
+        if (window.sandbox_name) |name| draw_sandbox: {
+            const text_w = render_.utils.str_width(self.font.font, name) catch break :draw_sandbox;
+            const cell_w: u16 = @intCast(@min(text_w + pad, @as(u32, w) -| @as(u32, @intCast(x))));
+            const sandbox_bg = render_.utils.color(window.sandbox_color);
+            const sandbox_fg = render_.utils.color(sandbox.text_color(window.sandbox_color));
+            var cell = [_]pixman.Rectangle16 {
+                .{ .x = x, .y = 0, .width = cell_w, .height = h },
+            };
+            _ = pixman.Image.fillRectangles(.src, buffer.image, &sandbox_bg, 1, &cell);
+            _ = self.font.render_str(
+                buffer,
+                name,
+                &sandbox_fg,
+                x+@as(i16, @intCast(@divFloor(pad, 2))),
+                y,
+            );
+            x += @intCast(cell_w);
         }
 
         x += self.font.render_str(
