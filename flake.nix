@@ -35,9 +35,18 @@
             inherit kwm;
             river = river-main;
           };
+          tests = pkgs.callPackage ./nix/tests.nix {
+            inherit kwm;
+            river = river-main;
+          };
         in
         {
-          inherit kwm river-main shots;
+          inherit
+            kwm
+            river-main
+            shots
+            tests
+            ;
         };
     in
     {
@@ -51,8 +60,11 @@
           inherit (b) kwm;
           river = b.river-main;
           inherit (b.shots) screenshots screenshot;
+          test-maximize = b.tests.maximize;
         }
       );
+
+      checks = forEachSystem (pkgs: (build pkgs).tests.checks);
 
       devShells = forEachSystem (
         pkgs:
