@@ -3,9 +3,10 @@
 //! holds the label. Refer to sandbox.zig and `sandbox.label` in the
 //! configuration.
 //!
-//! - The label starts at the top left corner. Most programs have the close
-//!   button at the top right corner.
-//! - The label touches the inner side of the outline of the window.
+//! - The label starts at the top right corner. It is `side_space` logical
+//!   pixels from the side of the window, so it does not cover the close
+//!   button of most programs.
+//! - The label touches the inner side of the top outline of the window.
 //! - When the pointer comes near the label, the label goes to the other top
 //!   corner. Thus the label does not stop a click on the window below it.
 //!   The surface of the label has a transparent margin below the label and
@@ -36,6 +37,9 @@ const ctx = Context.get();
 
 pub const Corner = enum { left, right };
 
+/// The space between the label and the side of the window, in logical pixels.
+const side_space = 24;
+
 
 wl_surface: *wl.Surface,
 wp_viewport: *wp.Viewport,
@@ -43,7 +47,7 @@ rwm_decoration: *river.DecorationV1,
 buffers: [2]render_.Buffer = .{ .{}, .{} },
 
 /// The top corner of the label.
-corner: Corner = .left,
+corner: Corner = .right,
 
 /// The last state that `render` drew. `render` draws the buffer again only
 /// for a different state.
@@ -121,11 +125,12 @@ pub fn render(
     }
 
     const d = self.drawn orelse return;
-    // The label touches the outline at the top and at the side of its corner.
-    // The margin is on the other side of the label.
+    // The label touches the outline at the top, and is `side_space` from the
+    // side of its corner. The margin is on the other side of the label. A
+    // narrow window keeps the label inside the outline.
     const x = switch (d.corner) {
-        .left => -inset,
-        .right => window_width + inset - d.width - d.margin,
+        .left => -inset + side_space,
+        .right => @max(-inset, window_width + inset - d.width - d.margin - side_space),
     };
     const y = -inset;
     const changed = if (self.offset) |o| o.x != x or o.y != y else true;
