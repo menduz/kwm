@@ -24,6 +24,7 @@ const Output = @import("output.zig");
 const Window = @import("window.zig");
 const Context = @import("context.zig");
 const ShellSurface = @import("shell_surface.zig");
+const SandboxLabel = if (build_options.bar_enabled) @import("sandbox_label.zig") else void;
 
 const ctx = Context.get();
 
@@ -1156,6 +1157,12 @@ fn wl_pointer_listener(wl_pointer: *wl.Pointer, event: wl.Pointer.Event, seat: *
             seat.pointer_surface_x = data.surface_x.toInt();
             seat.pointer_surface_y = data.surface_y.toInt();
             seat.hover_widget();
+
+            // The pointer comes near the label of a sandbox: the label moves
+            // to the other corner of its window.
+            if (comptime build_options.bar_enabled) {
+                if (data.surface) |surface| _ = SandboxLabel.pointer_enter(surface);
+            }
         },
         .motion => |data| {
             seat.pointer_surface_x = data.surface_x.toInt();

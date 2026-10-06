@@ -663,7 +663,34 @@ fn render_sandbox_label(self: *Self) void {
         };
     }
 
-    self.sandbox_label.?.render(&output.bar, name, self.sandbox_color, self.border_focused, self.content_width);
+    self.sandbox_label.?.render(
+        &output.bar,
+        name,
+        self.sandbox_color,
+        self.border_focused,
+        self.content_width,
+        self.outline_inset(),
+    );
+}
+
+
+/// The space between the window and the inner side of its outline, the same
+/// values as render_raised_border. 0: river draws the border outside the
+/// window (the flat style), or the window has no outline.
+fn outline_inset(self: *const Self) i32 {
+    const border = ctx.cfg.border.width;
+    if (ctx.cfg.border.style != .raised or border <= 0 or self.fullscreen == .output) return 0;
+
+    // The ring of the raised border around the window. A window with client
+    // side decorations has its frame in the margin and in the border.
+    const ring = if (self.uses_csd()) blk: {
+        const margin = self.csd_margin();
+        if (margin <= 0) return 0;
+        break :blk border + margin;
+    } else border;
+
+    // A ring of 3 pixels or more has the outline in its outside pixel.
+    return if (ring >= 3) ring - 1 else ring;
 }
 
 

@@ -1,7 +1,16 @@
 //! The label of a sandbox window: the name of the sandbox, in the color of
-//! the sandbox, at the top right corner of the window. A decoration above the
-//! window holds the label. Refer to sandbox.zig and `sandbox.label` in the
+//! the sandbox, at a top corner of the window. A decoration above the window
+//! holds the label. Refer to sandbox.zig and `sandbox.label` in the
 //! configuration.
+//!
+//! - The label starts at the top left corner. Most programs have the close
+//!   button at the top right corner.
+//! - The label touches the inner side of the outline of the window.
+//! - When the pointer comes near the label, the label goes to the other top
+//!   corner. Thus the label does not stop a click on the window below it.
+//!   The surface of the label has a transparent margin below the label and
+//!   on the side of the window. kwm gets the pointer events of its own
+//!   surfaces (wl_pointer), as for the bar.
 //!
 //! The label uses the font and the scale of the bar of the output.
 
@@ -25,11 +34,16 @@ const Bar = @import("bar.zig");
 
 const ctx = Context.get();
 
+pub const Corner = enum { left, right };
+
 
 wl_surface: *wl.Surface,
 wp_viewport: *wp.Viewport,
 rwm_decoration: *river.DecorationV1,
 buffers: [2]render_.Buffer = .{ .{}, .{} },
+
+/// The top corner of the label.
+corner: Corner = .left,
 
 /// The last state that `render` drew. `render` draws the buffer again only
 /// for a different state.
@@ -38,12 +52,16 @@ drawn: ?struct {
     scale: u32,
     color: u32,
     focused: bool,
+    corner: Corner,
     /// The size of the label, in logical pixels.
     width: i32,
     height: i32,
+    /// The transparent margin below the label and on the side of the window,
+    /// in logical pixels.
+    margin: i32,
 } = null,
 /// The last offset from the top left corner of the window.
-offset_x: ?i32 = null,
+offset: ?struct { x: i32, y: i32 } = null,
 
 
 pub fn init(self: *Self, window: *Window) !void {
@@ -78,11 +96,21 @@ pub fn deinit(self: *Self) void {
 
 
 /// Draw the label `name` on a window that is `window_width` logical pixels
-/// wide. Call it in a render sequence.
-pub fn render(self: *Self, bar: *Bar, name: []const u8, color: u32, focused: bool, window_width: i32) void {
+/// wide. `inset` is the space between the window and the inner side of its
+/// outline: the label touches the outline. Call it in a render sequence.
+pub fn render(
+    self: *Self,
+    bar: *Bar,
+    name: []const u8,
+    color: u32,
+    focused: bool,
+    window_width: i32,
+    inset: i32,
+) void {
     const same =
         if (self.drawn) |d|
-            d.bar == bar and d.scale == bar.scale and d.color == color and d.focused == focused
+            d.bar == bar and d.scale == bar.scale and d.color == color
+            and d.focused == focused and d.corner == self.corner
         else false;
 
     if (!same) {
@@ -93,13 +121,40 @@ pub fn render(self: *Self, bar: *Bar, name: []const u8, color: u32, focused: boo
     }
 
     const d = self.drawn orelse return;
-    // A small space between the label and the right edge of the window.
-    const inset = @divFloor(d.height, 2);
-    const x = @max(0, window_width - d.width - inset);
-    if (!same or self.offset_x != x) {
-        self.offset_x = x;
-        self.rwm_decoration.setOffset(x, 0);
+    // The label touches the outline at the top and at the side of its corner.
+    // The margin is on the other side of the label.
+    const x = switch (d.corner) {
+        .left => -inset,
+        .right => window_width + inset - d.width - d.margin,
+    };
+    const y = -inset;
+    const changed = if (self.offset) |o| o.x != x or o.y != y else true;
+    if (!same or changed) {
+        self.offset = .{ .x = x, .y = y };
+        self.rwm_decoration.setOffset(x, y);
     }
+}
+
+
+/// The pointer entered the surface `surface` of kwm. If it is the surface of
+/// a label, the label goes to the other top corner. Returns true for the
+/// surface of a label.
+pub fn pointer_enter(surface: *wl.Surface) bool {
+    var it = ctx.windows.safeIterator(.forward);
+    while (it.next()) |window| {
+        const label = &(window.sandbox_label orelse continue);
+        if (label.wl_surface != surface) continue;
+
+        label.corner = switch (label.corner) {
+            .left => .right,
+            .right => .left,
+        };
+        log.debug("<{*}> pointer near, move to the {s} corner", .{ label, @tagName(label.corner) });
+        // The next render sequence moves the label.
+        ctx.rwm.manageDirty();
+        return true;
+    }
+    return false;
 }
 
 
@@ -118,30 +173,46 @@ fn draw(self: *Self, bar: *Bar, name: []const u8, color: u32, focused: bool) !vo
     const pad_y: i32 = @max(1, @divFloor(font.height(), 8));
     const w: i32 = @as(i32, @intCast(render_.utils.text_width(run))) + 2 * pad_x;
     const h: i32 = font.height() + 2 * pad_y;
+    // The transparent margin: the pointer is "near" the label in it.
+    const margin: i32 = @divFloor(font.height(), 2);
+    // The label is at the left of the buffer for the left corner, and at the
+    // right for the right corner.
+    const label_x: i32 = switch (self.corner) {
+        .left => 0,
+        .right => margin,
+    };
 
     const buffer = self.next_buffer() orelse return error.NoBuffer;
-    buffer.init(w, h) catch |err| {
+    buffer.init(w + margin, h + margin) catch |err| {
         buffer.busy = false;
         return err;
     };
+
+    // A buffer can hold an older label. The margin is transparent.
+    var all = [_]pixman.Rectangle16 {
+        .{ .x = 0, .y = 0, .width = @intCast(w + margin), .height = @intCast(h + margin) },
+    };
+    const transparent: pixman.Color = .{ .red = 0, .green = 0, .blue = 0, .alpha = 0 };
+    _ = pixman.Image.fillRectangles(.src, buffer.image, &transparent, 1, &all);
 
     // A window without the focus has the dim color of the sandbox.
     const bg_rgba = if (focused) color else sandbox.dim(color);
     const bg = render_.utils.color(bg_rgba);
     const fg = render_.utils.color(sandbox.text_color(bg_rgba));
     var rect = [_]pixman.Rectangle16 {
-        .{ .x = 0, .y = 0, .width = @intCast(w), .height = @intCast(h) },
+        .{ .x = @intCast(label_x), .y = 0, .width = @intCast(w), .height = @intCast(h) },
     };
     _ = pixman.Image.fillRectangles(.src, buffer.image, &bg, 1, &rect);
-    _ = font.render_text(buffer, run, &fg, pad_x, pad_y);
+    _ = font.render_text(buffer, run, &fg, label_x + pad_x, pad_y);
 
     const logical_w = utils.physics2logical(i32, w, bar.scale);
     const logical_h = utils.physics2logical(i32, h, bar.scale);
+    const logical_margin = utils.physics2logical(i32, margin, bar.scale);
 
     self.rwm_decoration.syncNextCommit();
     self.wl_surface.attach(buffer.wl_buffer, 0, 0);
-    self.wl_surface.damageBuffer(0, 0, w, h);
-    self.wp_viewport.setDestination(logical_w, logical_h);
+    self.wl_surface.damageBuffer(0, 0, w + margin, h + margin);
+    self.wp_viewport.setDestination(logical_w + logical_margin, logical_h + logical_margin);
     self.wl_surface.commit();
 
     self.drawn = .{
@@ -149,8 +220,10 @@ fn draw(self: *Self, bar: *Bar, name: []const u8, color: u32, focused: bool) !vo
         .scale = bar.scale,
         .color = color,
         .focused = focused,
+        .corner = self.corner,
         .width = logical_w,
         .height = logical_h,
+        .margin = logical_margin,
     };
 }
 
