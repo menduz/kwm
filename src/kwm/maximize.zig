@@ -29,13 +29,26 @@ pub const State = struct {
     /// The maximized state that the client knows.
     informed: bool = false,
 
-    /// The client asks to be maximized (true) or unmaximized (false). Returns
-    /// the new maximize value of kwm, or null when the request waits for the
-    /// init event.
-    pub fn request(self: *State, maximize: bool) ?bool {
-        if (self.initialized) return maximize;
-        self.at_start = maximize;
-        return null;
+    /// The client asks to be maximized (true) or unmaximized (false).
+    /// `fills_output` is true when the layout gives the window all of the
+    /// output. Returns the new maximize value of kwm, or null when kwm keeps
+    /// its value.
+    ///
+    /// - Before the init event, a request is only the initial state of the
+    ///   client.
+    /// - A window that fills the output is maximized for the client already.
+    ///   Some clients ask again for that state, for example when their window
+    ///   shows again after a change of tag. kwm then does not maximize the
+    ///   window itself: a window that kwm maximizes has the border around it,
+    ///   and ignores the layout and the floating state until it loses the
+    ///   focus.
+    pub fn request(self: *State, maximize: bool, fills_output: bool) ?bool {
+        if (!self.initialized) {
+            self.at_start = maximize;
+            return null;
+        }
+        if (maximize and fills_output) return null;
+        return maximize;
     }
 
     /// The init event, after the window rules. Returns true when kwm maximizes
@@ -68,28 +81,37 @@ test "fills_area: only the full exclusive area" {
 
 test "request: a mapped window gets the request at once" {
     var state: State = .{ .initialized = true };
-    try testing.expectEqual(@as(?bool, true), state.request(true));
-    try testing.expectEqual(@as(?bool, false), state.request(false));
+    try testing.expectEqual(@as(?bool, true), state.request(true, false));
+    try testing.expectEqual(@as(?bool, false), state.request(false, false));
     try testing.expect(!state.at_start);
+}
+
+test "request: a window that fills the output is not maximized again" {
+    var state: State = .{ .initialized = true };
+    try testing.expectEqual(@as(?bool, true), state.sync(false, true));
+    // The client asks for the state that it has already.
+    try testing.expectEqual(@as(?bool, null), state.request(true, true));
+    // An unmaximize request still goes through.
+    try testing.expectEqual(@as(?bool, false), state.request(false, true));
 }
 
 test "init: a tiled window does not keep a maximize request of its start" {
     var state: State = .{};
-    try testing.expectEqual(@as(?bool, null), state.request(true));
+    try testing.expectEqual(@as(?bool, null), state.request(true, false));
     try testing.expect(!state.init(true));
     try testing.expect(state.initialized);
 }
 
 test "init: a floating window keeps a maximize request of its start" {
     var state: State = .{};
-    try testing.expectEqual(@as(?bool, null), state.request(true));
+    try testing.expectEqual(@as(?bool, null), state.request(true, false));
     try testing.expect(state.init(false));
 }
 
 test "init: an unmaximize request before init cancels the maximize request" {
     var state: State = .{};
-    _ = state.request(true);
-    _ = state.request(false);
+    _ = state.request(true, false);
+    _ = state.request(false, false);
     try testing.expect(!state.init(false));
 }
 
@@ -118,7 +140,7 @@ test "a second window of the same client does not stay maximized" {
 
     // The client opens window b in the state of a: maximized.
     var b: State = .{};
-    try testing.expectEqual(@as(?bool, null), b.request(true));
+    try testing.expectEqual(@as(?bool, null), b.request(true, false));
     const b_maximize = b.init(true);
     try testing.expect(!b_maximize);
 

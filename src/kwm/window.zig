@@ -694,6 +694,10 @@ pub fn toggle_floating(self: *Self, flag: ?bool) void {
 
     log.debug("<{*}> toggle floating: {}", .{ self, self.floating });
 
+    // A window that kwm maximizes ignores the layout and the floating state.
+    // Thus a change of the floating state also ends the maximized state.
+    self.toggle_maximize(false);
+
     if (comptime build_options.bar_enabled) {
         if (self.output) |output| {
             output.bar.damage(.title);
@@ -1375,14 +1379,14 @@ fn rwm_window_listener(rwm_window: *river.WindowV1, event: river.WindowV1.Event,
         .maximize_requested => {
             log.debug("<{*}> maximize requested", .{ window });
 
-            if (window.maximize_state.request(true)) |flag| {
+            if (window.maximize_state.request(true, window.fills_output())) |flag| {
                 window.toggle_maximize(flag);
             }
         },
         .unmaximize_requested => {
             log.debug("<{*}> unmaximize requested", .{ window });
 
-            if (window.maximize_state.request(false)) |flag| {
+            if (window.maximize_state.request(false, window.fills_output())) |flag| {
                 window.toggle_maximize(flag);
             }
         },
