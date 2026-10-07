@@ -108,10 +108,10 @@ pub const Config = struct {
         } = .{},
     },
 
-    /// The windows of a sandbox. A sandbox launcher sets SANDBOX_NAME and
-    /// SANDBOX_COLOR in the environment of a program. kwm then shows the
-    /// name in the bar, and draws the border in the color of the sandbox.
-    /// Refer to sandbox.zig.
+    /// The windows of a sandbox. A sandbox launcher starts a program in a
+    /// systemd scope below "sandbox-<name>.slice". kwm then shows the name
+    /// in the bar, and draws the border in the color of the sandbox from
+    /// /etc/sandboxes/config.json. Refer to sandbox.zig.
     sandbox: struct {
         /// Show a label with the name of the sandbox at the top right corner
         /// of each window of a sandbox. A window on the host has no label.

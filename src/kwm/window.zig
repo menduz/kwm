@@ -106,7 +106,7 @@ tag: u32 = 1,
 pid: i32 = 0,
 app_id: ?[]const u8 = null,
 title: ?[]const u8 = null,
-/// The sandbox of the client, from its environment. null: no sandbox. Refer
+/// The sandbox of the client, from its cgroup. null: no sandbox. Refer
 /// to sandbox.zig.
 sandbox_name: ?[]const u8 = null,
 sandbox_color: u32 = sandbox.default_color,
@@ -617,7 +617,7 @@ pub fn border_color(self: *const Self, color: u32) u32 {
 }
 
 
-/// Read the sandbox of the client from its environment. Refer to sandbox.zig.
+/// Read the sandbox of the client from its cgroup. Refer to sandbox.zig.
 fn read_sandbox(self: *Self) void {
     self.clear_sandbox();
 

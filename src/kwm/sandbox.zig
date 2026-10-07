@@ -1,23 +1,21 @@
 //! The sandbox of a window. The pid of the client comes from the
-//! unreliable_pid event of river. kwm finds the sandbox of that process in
-//! this order:
+//! unreliable_pid event of river. kwm finds the sandbox of that process from
+//! its cgroup, in /proc/<pid>/cgroup:
 //!
-//! 1. The cgroup. The sandbox launcher starts each run in a systemd scope
-//!    below the slice "sandbox-<name>.slice". The program cannot change its
-//!    cgroup, because it has no access to /sys/fs/cgroup or to systemd. The
-//!    color and the GTK theme come from `config_path`. This also works when
-//!    the pid is not the pid of the program, for example the Sentry of
-//!    gVisor.
-//! 2. The environment, /proc/<pid>/environ, for a run without a scope:
-//!    - SANDBOX_NAME: the name of the sandbox, for example "work".
-//!    - SANDBOX_COLOR: the color of the sandbox, as "#rrggbb".
-//!    - GTK_THEME: the GTK theme of the sandbox (optional).
-//!    The program can change its own environ memory. Thus this name is a hint
-//!    for the user, not a security boundary.
-//! 3. The host. If `config_path` exists, a process in no sandbox is on the
-//!    host. Its name is "host", and its color is the color of the "host"
-//!    block of `config_path`. Without `config_path`, the process has no
-//!    sandbox and no label.
+//! - The sandbox launcher starts each run in a systemd scope below the slice
+//!   "sandbox-<name>.slice". The program cannot change its cgroup, because it
+//!   has no access to /sys/fs/cgroup or to systemd. The color and the GTK
+//!   theme come from `config_path`. This also works when the pid is not the
+//!   pid of the program, for example the Sentry of gVisor.
+//! - If `config_path` exists, a process in no sandbox slice is on the host.
+//!   Its name is "host", and its color is the color of the "host" block of
+//!   `config_path`. Without `config_path`, the process has no sandbox and no
+//!   label.
+//!
+//! kwm does not read the environment of the process. The program can change
+//! it. SANDBOX_NAME and SANDBOX_COLOR are only for the programs in the
+//! sandbox, for example the shell prompt. Thus a run without a scope
+//! (SANDBOX_NO_SCOPE) is on the host for kwm.
 //!
 //! The bar, the border and the label of the window then show the sandbox.
 //! A window on the host has no label: only the bar shows "host". Refer to
@@ -33,11 +31,8 @@ const testing = std.testing;
 const posix = @import("posix");
 
 
-/// The color of a sandbox without a valid SANDBOX_COLOR.
+/// The color of a sandbox without a valid color in `config_path`.
 pub const default_color: u32 = 0xc01c28ff;
-
-/// The maximum size of /proc/<pid>/environ that kwm reads.
-const environ_max = 64 * 1024;
 
 /// The configuration of the sandboxes, from the NixOS module of the sandbox
 /// launcher:
@@ -46,21 +41,22 @@ const environ_max = 64 * 1024;
 ///      "environments": {"<name>": {"color": "#rrggbb", "gtkTheme": "..."}}}
 pub const config_path = "/etc/sandboxes/config.json";
 
-/// The size of the buffer that `read` needs.
+/// The size of the buffer that `read` needs: the cgroup file, the
+/// configuration file and the memory to parse the configuration.
 pub const buffer_size = 64 * 1024;
 const cgroup_max = 4 * 1024;
 const config_max = 28 * 1024;
 
 
 /// The sandbox values of a process. The slices point into the buffer of
-/// `parse`.
+/// `read`.
 pub const Info = struct {
     name: []const u8,
     /// 0xRRGGBBAA.
     color: u32,
     gtk_theme: ?[]const u8 = null,
-    /// The process is on the host, in no sandbox. Only `parse_host` sets
-    /// it. A SANDBOX_NAME "host" in the environment does not set it.
+    /// The process is in no sandbox slice. A sandbox has a slice, also a
+    /// sandbox with the name "host".
     host: bool = false,
 
     /// The window shows a label with the sandbox name. A window on the host
@@ -72,52 +68,49 @@ pub const Info = struct {
 
 
 /// Read the sandbox of the process `pid`. The result points into `buffer`,
-/// which has `buffer_size` bytes. null: there is no `config_path` and the
-/// process is in no sandbox, or kwm cannot read the process.
+/// which has `buffer_size` bytes. null: kwm cannot read the cgroup of the
+/// process, or the process is in no sandbox and there is no `config_path`.
 pub fn read(pid: i32, buffer: *[buffer_size]u8) ?Info {
     if (pid <= 0) return null;
 
     var path_buffer: [32]u8 = undefined;
+    const path = fmt.bufPrintZ(&path_buffer, "/proc/{}/cgroup", .{ pid }) catch return null;
+    const cgroup = read_file(path, buffer[0..cgroup_max]) orelse return null;
 
-    // 1. The cgroup.
-    cgroup: {
-        const path = fmt.bufPrintZ(&path_buffer, "/proc/{}/cgroup", .{ pid }) catch break :cgroup;
-        const cgroup = read_file(path, buffer[0..cgroup_max]) orelse break :cgroup;
-        const name = parse_cgroup(cgroup) orelse break :cgroup;
-        return lookup_config(name, buffer[cgroup_max..]);
+    var json = read_file(config_path, buffer[cgroup_max..][0..config_max]);
+    // A file that fills the buffer is cut. Its JSON text is not valid.
+    if (json) |text| {
+        if (text.len == config_max) json = "";
     }
 
-    // 2. The environment.
-    const path = fmt.bufPrintZ(&path_buffer, "/proc/{}/environ", .{ pid }) catch return null;
-    const environ = read_file(path, buffer[0..environ_max]) orelse return null;
-    if (parse(environ)) |info| return info;
-
-    // 3. The host.
-    return lookup_host(buffer[cgroup_max..]);
+    var fba: std.heap.FixedBufferAllocator = .init(buffer[cgroup_max + config_max ..]);
+    return resolve(fba.allocator(), cgroup, json);
 }
 
 
-/// The host, with the color of the "host" block of `config_path`. null: there
-/// is no `config_path`.
-fn lookup_host(buffer: []u8) ?Info {
-    if (buffer.len <= config_max) return null;
-    var json = read_file(config_path, buffer[0..config_max]) orelse return null;
-    // A file that fills the buffer is cut. Its JSON text is not valid.
-    if (json.len == config_max) json = "";
+/// The sandbox of a process, from the contents of its /proc/<pid>/cgroup
+/// and the JSON text of `config_path` (null: there is no file).
+///
+/// - A process in "sandbox-<name>.slice" is in the sandbox <name>, with the
+///   color and the GTK theme of the sandbox in `json`. A sandbox that is not
+///   in `json` has the default color.
+/// - Another process is on the host, with the color of the "host" block of
+///   `json`. null: there is no `json`.
+///
+/// The result points into `cgroup` and into the memory of `allocator`.
+pub fn resolve(allocator: mem.Allocator, cgroup: []const u8, json: ?[]const u8) ?Info {
+    if (parse_cgroup(cgroup)) |name| {
+        var info: Info = .{ .name = name, .color = default_color };
+        if (parse_config(allocator, json orelse "", name)) |environment| {
+            info.color = color_of(environment);
+            info.gtk_theme = environment.gtkTheme;
+        }
+        return info;
+    }
 
-    var fba: std.heap.FixedBufferAllocator = .init(buffer[config_max..]);
-    return parse_host(fba.allocator(), json);
-}
-
-
-/// The host, with the color of the "host" block in the JSON text of
-/// `config_path`. A text that is not valid, or that has no host color, gives
-/// the default color.
-pub fn parse_host(allocator: mem.Allocator, json: []const u8) Info {
     var info: Info = .{ .name = "host", .color = default_color, .host = true };
-    if (json.len == 0) return info;
-    if (parse_config(allocator, json, "host")) |host| {
-        if (host.color) |color| info.color = parse_color(color) orelse default_color;
+    if (parse_config(allocator, json orelse return null, "host")) |host| {
+        info.color = color_of(host);
     }
     return info;
 }
@@ -176,25 +169,6 @@ fn valid_name(name: []const u8) bool {
 }
 
 
-/// The sandbox `name` with the color and the GTK theme of `config_path`.
-/// Without the file or without the sandbox in it, the sandbox has the
-/// default color. The result points into `buffer`.
-fn lookup_config(name: []const u8, buffer: []u8) Info {
-    var info: Info = .{ .name = name, .color = default_color };
-    if (buffer.len <= config_max) return info;
-
-    const json = read_file(config_path, buffer[0..config_max]) orelse return info;
-    if (json.len == config_max) return info;
-
-    var fba: std.heap.FixedBufferAllocator = .init(buffer[config_max..]);
-    if (parse_config(fba.allocator(), json, name)) |environment| {
-        if (environment.color) |color| info.color = parse_color(color) orelse default_color;
-        info.gtk_theme = environment.gtkTheme;
-    }
-    return info;
-}
-
-
 const Environment = struct {
     color: ?[]const u8 = null,
     gtkTheme: ?[]const u8 = null,
@@ -217,37 +191,11 @@ pub fn parse_config(allocator: mem.Allocator, json: []const u8, name: []const u8
 }
 
 
-/// Find the sandbox values in an environment block: "KEY=value" entries,
-/// each one terminated by a NUL byte.
-pub fn parse(environ: []const u8) ?Info {
-    var name: ?[]const u8 = null;
-    var color: ?u32 = null;
-    var gtk_theme: ?[]const u8 = null;
-
-    var it = mem.splitScalar(u8, environ, 0);
-    while (it.next()) |entry| {
-        if (value_of(entry, "SANDBOX_NAME")) |v| {
-            if (v.len > 0) name = v;
-        } else if (value_of(entry, "SANDBOX_COLOR")) |v| {
-            color = parse_color(v);
-        } else if (value_of(entry, "GTK_THEME")) |v| {
-            // GTK_THEME can give a variant after the name: "Name:dark".
-            const theme = v[0 .. mem.indexOfScalar(u8, v, ':') orelse v.len];
-            if (theme.len > 0) gtk_theme = theme;
-        }
-    }
-
-    return .{
-        .name = name orelse return null,
-        .color = color orelse default_color,
-        .gtk_theme = gtk_theme,
-    };
-}
-
-
-fn value_of(entry: []const u8, comptime key: []const u8) ?[]const u8 {
-    if (!mem.startsWith(u8, entry, key ++ "=")) return null;
-    return entry[key.len + 1 ..];
+/// The color of a block of `config_path`. A block without a valid color has
+/// the default color.
+fn color_of(environment: Environment) u32 {
+    const color = environment.color orelse return default_color;
+    return parse_color(color) orelse default_color;
 }
 
 
@@ -279,33 +227,6 @@ pub fn text_color(color: u32) u32 {
     return if (luma > 140 * 1000) 0x000000ff else 0xffffffff;
 }
 
-
-test "parse: the name, the color and the GTK theme" {
-    const env = "PATH=/bin\x00SANDBOX_NAME=work\x00SANDBOX_COLOR=#3a7d44\x00GTK_THEME=win-classic-teal:dark\x00";
-    const info = parse(env).?;
-    try testing.expectEqualStrings("work", info.name);
-    try testing.expectEqual(@as(u32, 0x3a7d44ff), info.color);
-    try testing.expectEqualStrings("win-classic-teal", info.gtk_theme.?);
-}
-
-test "parse: no SANDBOX_NAME is no sandbox" {
-    try testing.expectEqual(@as(?Info, null), parse("SANDBOX_COLOR=#3a7d44\x00HOME=/home/a\x00"));
-    try testing.expectEqual(@as(?Info, null), parse("SANDBOX_NAME=\x00"));
-    try testing.expectEqual(@as(?Info, null), parse(""));
-}
-
-test "parse: a bad color gives the default color" {
-    const info = parse("SANDBOX_NAME=x\x00SANDBOX_COLOR=green\x00").?;
-    try testing.expectEqual(default_color, info.color);
-}
-
-test "parse: the key must match the full name" {
-    try testing.expectEqual(@as(?Info, null), parse("XSANDBOX_NAME=work\x00SANDBOX_NAMES=a\x00"));
-}
-
-test "parse: an environment without the last NUL byte" {
-    try testing.expectEqualStrings("work", parse("A=b\x00SANDBOX_NAME=work").?.name);
-}
 
 test "parse_cgroup: the slice of a sandbox scope" {
     const cgroup = "0::/user.slice/user-1000.slice/user@1000.service/sandbox.slice/sandbox-work.slice/sandbox-work-1234-5678.scope\n";
@@ -370,44 +291,85 @@ test "parse_config: the host block" {
     try testing.expectEqual(@as(?[]const u8, null), host.gtkTheme);
 }
 
-test "parse_host: the host has the host color and no label" {
-    const json =
-        \\{"host": {"color": "#808080"}, "environments": {
-        \\  "work": {"color": "#000000"}
-        \\}}
-    ;
+const test_config =
+    \\{"host": {"color": "#808080"}, "environments": {
+    \\  "work": {"color": "#3a7d44", "gtkTheme": "win-classic-sandbox-work"},
+    \\  "web": {"color": "green"}
+    \\}}
+;
+const test_work_cgroup = "0::/user.slice/user-1000.slice/user@1000.service/sandbox.slice/sandbox-work.slice/sandbox-work-1234-5678.scope\n";
+const test_host_cgroup = "0::/user.slice/user-1000.slice/user@1000.service/app.slice/app-foot-1.scope\n";
+
+test "resolve: a sandbox has the values of the configuration and a label" {
     var arena: std.heap.ArenaAllocator = .init(testing.allocator);
     defer arena.deinit();
 
-    const info = parse_host(arena.allocator(), json);
+    const info = resolve(arena.allocator(), test_work_cgroup, test_config).?;
+    try testing.expectEqualStrings("work", info.name);
+    try testing.expectEqual(@as(u32, 0x3a7d44ff), info.color);
+    try testing.expectEqualStrings("win-classic-sandbox-work", info.gtk_theme.?);
+    try testing.expect(!info.host);
+    try testing.expect(info.has_label());
+}
+
+test "resolve: a sandbox without valid values has the default color" {
+    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena.deinit();
+
+    // The color is not "#rrggbb".
+    const web = resolve(arena.allocator(), "0::/sandbox.slice/sandbox-web.slice/a.scope\n", test_config).?;
+    try testing.expectEqual(default_color, web.color);
+    // The sandbox is not in the configuration.
+    const other = resolve(arena.allocator(), "0::/sandbox.slice/sandbox-other.slice/a.scope\n", test_config).?;
+    try testing.expectEqualStrings("other", other.name);
+    try testing.expectEqual(default_color, other.color);
+    try testing.expectEqual(@as(?[]const u8, null), other.gtk_theme);
+    // There is no configuration, or it is not valid.
+    const no_config = resolve(arena.allocator(), test_work_cgroup, null).?;
+    try testing.expectEqualStrings("work", no_config.name);
+    try testing.expectEqual(default_color, no_config.color);
+    try testing.expect(no_config.has_label());
+    try testing.expectEqual(default_color, resolve(arena.allocator(), test_work_cgroup, "").?.color);
+}
+
+test "resolve: a process in no sandbox slice is on the host, without a label" {
+    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena.deinit();
+
+    const info = resolve(arena.allocator(), test_host_cgroup, test_config).?;
     try testing.expectEqualStrings("host", info.name);
     try testing.expectEqual(@as(u32, 0x808080ff), info.color);
     try testing.expect(info.host);
     try testing.expect(!info.has_label());
 }
 
-test "parse_host: no host color gives the default color" {
+test "resolve: the host without a valid host color has the default color" {
     var arena: std.heap.ArenaAllocator = .init(testing.allocator);
     defer arena.deinit();
 
-    const empty = parse_host(arena.allocator(), "");
-    try testing.expectEqual(default_color, empty.color);
-    try testing.expect(empty.host);
-
-    const not_json = parse_host(arena.allocator(), "not json");
-    try testing.expectEqual(default_color, not_json.color);
-    try testing.expect(!not_json.has_label());
-
-    const no_color = parse_host(arena.allocator(), "{\"host\": {}}");
-    try testing.expectEqual(default_color, no_color.color);
+    // A configuration that is cut, not valid, or without a host block.
+    for ([_][]const u8{ "", "not json", "{\"host\": {}}", "{\"environments\": {}}" }) |json| {
+        const info = resolve(arena.allocator(), test_host_cgroup, json).?;
+        try testing.expect(info.host);
+        try testing.expectEqual(default_color, info.color);
+    }
 }
 
-test "has_label: a sandbox has a label" {
-    try testing.expect(parse("SANDBOX_NAME=work\x00").?.has_label());
-    // The environment cannot make a window a host window.
-    const fake = parse("SANDBOX_NAME=host\x00").?;
-    try testing.expect(!fake.host);
-    try testing.expect(fake.has_label());
+test "resolve: without a configuration, a process in no sandbox has no sandbox" {
+    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena.deinit();
+
+    try testing.expectEqual(@as(?Info, null), resolve(arena.allocator(), test_host_cgroup, null));
+    try testing.expectEqual(@as(?Info, null), resolve(arena.allocator(), "", null));
+}
+
+test "resolve: only the cgroup gives a sandbox" {
+    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena.deinit();
+
+    // A cgroup v1 line does not give a sandbox. The process is on the host.
+    const info = resolve(arena.allocator(), "1:name=systemd:/sandbox.slice/sandbox-work.slice/a.scope\n0::/app.slice/a.scope\n", test_config).?;
+    try testing.expect(info.host);
 }
 
 test "dim and text_color" {
