@@ -112,6 +112,9 @@ sandbox_name: ?[]const u8 = null,
 sandbox_color: u32 = sandbox.default_color,
 /// The GTK theme of the sandbox. The raised border uses its colors.
 sandbox_gtk_theme: ?[]const u8 = null,
+/// The window shows the label of the sandbox. A window on the host has no
+/// label.
+sandbox_has_label: bool = false,
 /// The label of `sandbox.label`. Refer to sandbox_label.zig.
 sandbox_label: if (build_options.bar_enabled) ?SandboxLabel else void =
     if (build_options.bar_enabled) null else {},
@@ -625,6 +628,7 @@ fn read_sandbox(self: *Self) void {
 
     self.sandbox_name = ctx.gpa.dupe(u8, info.name) catch return;
     self.sandbox_color = info.color;
+    self.sandbox_has_label = info.has_label();
     if (info.gtk_theme) |name| {
         self.sandbox_gtk_theme = ctx.gpa.dupe(u8, name) catch null;
     }
@@ -641,17 +645,23 @@ fn clear_sandbox(self: *Self) void {
     self.sandbox_name = null;
     self.sandbox_gtk_theme = null;
     self.sandbox_color = sandbox.default_color;
+    self.sandbox_has_label = false;
 }
 
 
-/// Draw, move or remove the label of the sandbox. A fullscreen window has
-/// no label.
+/// Draw, move or remove the label of the sandbox. A fullscreen window and a
+/// window on the host have no label.
 fn render_sandbox_label(self: *Self) void {
     if (comptime !build_options.bar_enabled) return;
 
     const name = self.sandbox_name orelse return self.remove_sandbox_label();
     const output = self.output orelse return self.remove_sandbox_label();
-    if (!ctx.cfg.sandbox.label or self.fullscreen != .none or self.content_width <= 0) {
+    if (
+        !ctx.cfg.sandbox.label
+        or !self.sandbox_has_label
+        or self.fullscreen != .none
+        or self.content_width <= 0
+    ) {
         return self.remove_sandbox_label();
     }
 

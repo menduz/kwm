@@ -315,7 +315,7 @@
     // in its environment; the bar shows the name before the title, and the border has
     // the color of the sandbox
     .sandbox = .{
-        // a label with the name at the top right corner of the window
+        // a label with the name at the top right corner of the window (not for "host")
         .label = true,
     },
 

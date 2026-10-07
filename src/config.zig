@@ -114,7 +114,7 @@ pub const Config = struct {
     /// Refer to sandbox.zig.
     sandbox: struct {
         /// Show a label with the name of the sandbox at the top right corner
-        /// of each window of a sandbox.
+        /// of each window of a sandbox. A window on the host has no label.
         label: bool = true,
     } = .{},
 

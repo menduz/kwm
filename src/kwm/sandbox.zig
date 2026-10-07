@@ -20,7 +20,8 @@
 //!    sandbox and no label.
 //!
 //! The bar, the border and the label of the window then show the sandbox.
-//! Refer to sandbox_label.zig.
+//! A window on the host has no label: only the bar shows "host". Refer to
+//! sandbox_label.zig.
 //!
 //! `zig build test` runs the tests below.
 
@@ -58,6 +59,15 @@ pub const Info = struct {
     /// 0xRRGGBBAA.
     color: u32,
     gtk_theme: ?[]const u8 = null,
+    /// The process is on the host, in no sandbox. Only `parse_host` sets
+    /// it. A SANDBOX_NAME "host" in the environment does not set it.
+    host: bool = false,
+
+    /// The window shows a label with the sandbox name. A window on the host
+    /// has no label. The bar shows the name.
+    pub fn has_label(self: Info) bool {
+        return !self.host;
+    }
 };
 
 
@@ -91,12 +101,22 @@ pub fn read(pid: i32, buffer: *[buffer_size]u8) ?Info {
 /// is no `config_path`.
 fn lookup_host(buffer: []u8) ?Info {
     if (buffer.len <= config_max) return null;
-    const json = read_file(config_path, buffer[0..config_max]) orelse return null;
-    var info: Info = .{ .name = "host", .color = default_color };
-    if (json.len == config_max) return info;
+    var json = read_file(config_path, buffer[0..config_max]) orelse return null;
+    // A file that fills the buffer is cut. Its JSON text is not valid.
+    if (json.len == config_max) json = "";
 
     var fba: std.heap.FixedBufferAllocator = .init(buffer[config_max..]);
-    if (parse_config(fba.allocator(), json, "host")) |host| {
+    return parse_host(fba.allocator(), json);
+}
+
+
+/// The host, with the color of the "host" block in the JSON text of
+/// `config_path`. A text that is not valid, or that has no host color, gives
+/// the default color.
+pub fn parse_host(allocator: mem.Allocator, json: []const u8) Info {
+    var info: Info = .{ .name = "host", .color = default_color, .host = true };
+    if (json.len == 0) return info;
+    if (parse_config(allocator, json, "host")) |host| {
         if (host.color) |color| info.color = parse_color(color) orelse default_color;
     }
     return info;
@@ -348,6 +368,46 @@ test "parse_config: the host block" {
     const host = parse_config(arena.allocator(), json, "host").?;
     try testing.expectEqualStrings("#f29718", host.color.?);
     try testing.expectEqual(@as(?[]const u8, null), host.gtkTheme);
+}
+
+test "parse_host: the host has the host color and no label" {
+    const json =
+        \\{"host": {"color": "#808080"}, "environments": {
+        \\  "work": {"color": "#000000"}
+        \\}}
+    ;
+    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena.deinit();
+
+    const info = parse_host(arena.allocator(), json);
+    try testing.expectEqualStrings("host", info.name);
+    try testing.expectEqual(@as(u32, 0x808080ff), info.color);
+    try testing.expect(info.host);
+    try testing.expect(!info.has_label());
+}
+
+test "parse_host: no host color gives the default color" {
+    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena.deinit();
+
+    const empty = parse_host(arena.allocator(), "");
+    try testing.expectEqual(default_color, empty.color);
+    try testing.expect(empty.host);
+
+    const not_json = parse_host(arena.allocator(), "not json");
+    try testing.expectEqual(default_color, not_json.color);
+    try testing.expect(!not_json.has_label());
+
+    const no_color = parse_host(arena.allocator(), "{\"host\": {}}");
+    try testing.expectEqual(default_color, no_color.color);
+}
+
+test "has_label: a sandbox has a label" {
+    try testing.expect(parse("SANDBOX_NAME=work\x00").?.has_label());
+    // The environment cannot make a window a host window.
+    const fake = parse("SANDBOX_NAME=host\x00").?;
+    try testing.expect(!fake.host);
+    try testing.expect(fake.has_label());
 }
 
 test "dim and text_color" {
