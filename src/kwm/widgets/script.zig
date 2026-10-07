@@ -74,9 +74,15 @@ pub fn start(exec: []const u8) ?Process {
 }
 
 
+/// Stop the command and all of its processes. The command is the leader of
+/// its own process group (setsid in `start`), so kwm sends SIGTERM to the
+/// group. A shell gets SIGTERM, but runs its trap only after the command that
+/// it waits for. A script that waits for a pipeline (for example
+/// `pw-dump --monitor | jq`) would then never stop, and the pipeline would
+/// stay after kwm.
 pub fn stop(data: *Data) void {
     var process = data.* orelse return;
-    _ = std.c.kill(process.pid, .TERM);
+    if (std.c.kill(-process.pid, .TERM) != 0) _ = std.c.kill(process.pid, .TERM);
     posix.close(process.fd);
     process.line.deinit(ctx.gpa);
     data.* = null;
