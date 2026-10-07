@@ -18,6 +18,7 @@ const Output = @import("output.zig");
 const Context = @import("context.zig");
 const CustomBorder = @import("custom_border.zig");
 const RaisedBorder = @import("raised_border.zig");
+const floating_zig = @import("floating.zig");
 const maximize_zig = @import("maximize.zig");
 const MaximizeState = maximize_zig.State;
 const theme = @import("theme.zig");
@@ -1176,10 +1177,16 @@ fn set_title(self: *Self, title: ?[]const u8) void {
 }
 
 
-fn center(self: *Self) void {
+pub fn center(self: *Self) void {
     if (self.output) |output| {
-        self.x = @divFloor(output.exclusive_width()-self.width, 2);
-        self.y = @divFloor(output.exclusive_height()-self.height, 2);
+        const position = floating_zig.center(
+            self.width,
+            self.height,
+            output.exclusive_width(),
+            output.exclusive_height(),
+        );
+        self.x = position.x;
+        self.y = position.y;
     }
 }
 

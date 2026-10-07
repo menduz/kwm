@@ -24,6 +24,7 @@ const Output = @import("output.zig");
 const Window = @import("window.zig");
 const Context = @import("context.zig");
 const ShellSurface = @import("shell_surface.zig");
+const floating_zig = @import("floating.zig");
 const SandboxLabel = if (build_options.bar_enabled) @import("sandbox_label.zig") else void;
 
 const ctx = Context.get();
@@ -665,6 +666,9 @@ fn handle_actions(self: *Self) void {
             .toggle_floating => {
                 if (ctx.focused_window()) |window| {
                     window.toggle_floating(null);
+                    if (floating_zig.centers_on_toggle(window.floating, window.floating_geometry != null)) {
+                        window.center();
+                    }
                 }
             },
             .toggle_sticky => {
