@@ -176,5 +176,6 @@ test {
     // The tests of the files without Wayland objects.
     _ = @import("kwm/floating.zig");
     _ = @import("kwm/maximize.zig");
+    _ = @import("kwm/refocus.zig");
     _ = @import("kwm/sandbox.zig");
 }

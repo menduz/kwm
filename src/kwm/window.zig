@@ -206,6 +206,13 @@ pub fn destroy(self: *Self) void {
     {
         var it = ctx.seats.safeIterator(.forward);
         while (it.next()) |seat| {
+            // The keyboard can be on this window after a drag. Refer to
+            // refocus.zig.
+            seat.refocus.window_closed(switch (seat.previous_focused) {
+                .window => |window| if (self == window) .this_window else .other_window,
+                .none, .output => .none,
+            });
+
             switch (seat.previous_focused) {
                 .window => |window| if (self == window) {
                     seat.previous_focused = if (self.output) |output| .{ .output = output } else .none;

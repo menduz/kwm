@@ -25,6 +25,7 @@ const Window = @import("window.zig");
 const Context = @import("context.zig");
 const ShellSurface = @import("shell_surface.zig");
 const floating_zig = @import("floating.zig");
+const refocus_zig = @import("refocus.zig");
 const SandboxLabel = if (build_options.bar_enabled) @import("sandbox_label.zig") else void;
 
 const ctx = Context.get();
@@ -63,6 +64,8 @@ previous_focused: union(enum) {
     window: *Window,
     output: *Output,
 } = .none,
+/// Clear the focus once after a window closes. Refer to refocus.zig.
+refocus: refocus_zig.State = .{},
 pointer_position: struct {
     x: i32 = 0,
     y: i32 = 0,
@@ -296,7 +299,14 @@ pub fn try_focus(self: *Self) void {
             if (window.output) |output|
                 output.fullscreen_window()
             else null;
-        self.rwm_seat.focusWindow((fullscreen_window orelse window).rwm_window);
+        switch (self.refocus.request()) {
+            .focus => self.rwm_seat.focusWindow((fullscreen_window orelse window).rwm_window),
+            .clear => {
+                log.debug("<{*}> clear focus, then focus {*} in the next manage sequence", .{ self, window });
+                self.rwm_seat.clearFocus();
+                ctx.rwm.manageDirty();
+            },
+        }
     } else {
         if (ctx.current_output) |output| {
             defer self.previous_focused = .{ .output = output };
@@ -314,6 +324,7 @@ pub fn try_focus(self: *Self) void {
             self.previous_focused = .none;
         }
 
+        self.refocus.cleared();
         self.rwm_seat.clearFocus();
     }
 }

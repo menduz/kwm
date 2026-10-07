@@ -61,6 +61,7 @@
           river = b.river-main;
           inherit (b.shots) screenshots screenshot;
           test-maximize = b.tests.maximize;
+          test-focus = b.tests.focus;
         }
       );
 

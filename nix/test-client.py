@@ -1,14 +1,22 @@
 # A Wayland client for the tests of kwm. It shows one xdg-shell window and
 # writes the last state that the compositor gives it to a file:
 #
-#     maximized=1 width=1280 height=696
+#     maximized=1 activated=1 keyboard=1 width=1280 height=696
 #
-# Usage: test-client.py <name> <state file> [--maximize] [--fixed]
+# activated is the xdg_toplevel state: river gives it to the window that river
+# knows as focused. keyboard is 1 between wl_keyboard.enter and
+# wl_keyboard.leave. The seat has a keyboard only with test-input.py. During a
+# drag, wlroots drops the keyboard enter, thus the two values can differ.
+#
+# Usage: test-client.py <name> <state file> [--maximize] [--fixed] [--drag]
 #
 #   --maximize  ask to be maximized before the first commit. Chromium does this
 #               when the last active window was maximized.
 #   --fixed     set the same minimum and maximum size, 300x200. kwm makes such
 #               a window floating.
+#   --drag      start a drag at a press of the pointer button on the window,
+#               and stop when the drag ends. Brave does this when a tab goes
+#               into another window: the window of the tab closes.
 #
 # SIGUSR1 asks to be maximized, SIGUSR2 asks to be unmaximized. The client
 # stops at SIGTERM.
@@ -19,7 +27,7 @@ import signal
 import sys
 
 from pywayland.client import Display
-from pywayland.protocol.wayland import WlCompositor, WlShm
+from pywayland.protocol.wayland import WlCompositor, WlDataDeviceManager, WlSeat, WlShm
 from pywayland.protocol.xdg_shell import XdgToplevel, XdgWmBase
 
 name, state_file = sys.argv[1], sys.argv[2]
@@ -38,10 +46,53 @@ def on_global(registry, id_, interface, version):
         globals_["shm"] = registry.bind(id_, WlShm, 1)
     elif interface == "xdg_wm_base":
         globals_["wm_base"] = registry.bind(id_, XdgWmBase, 1)
+    elif interface == "wl_data_device_manager":
+        globals_["data_device_manager"] = registry.bind(id_, WlDataDeviceManager, 3)
+    elif interface == "wl_seat" and "seat" not in globals_:
+        # Set the listener before the capabilities event comes.
+        globals_["seat"] = registry.bind(id_, WlSeat, 5)
+        globals_["seat"].dispatcher["capabilities"] = on_capabilities
+
+
+# The objects of the seat. A Python reference keeps each one.
+seat_objects = {}
+
+
+def on_capabilities(seat, capabilities):
+    if capabilities & WlSeat.capability.keyboard.value and "keyboard" not in seat_objects:
+        keyboard = seat_objects["keyboard"] = seat.get_keyboard()
+        keyboard.dispatcher["keymap"] = lambda keyboard, format_, fd, size: os.close(fd)
+        keyboard.dispatcher["enter"] = lambda keyboard, serial, focus, keys: set_keyboard(True)
+        keyboard.dispatcher["leave"] = lambda keyboard, serial, focus: set_keyboard(False)
+    if "--drag" in flags and capabilities & WlSeat.capability.pointer.value and "pointer" not in seat_objects:
+        pointer = seat_objects["pointer"] = seat.get_pointer()
+        pointer.dispatcher["button"] = on_button
+
+
+def set_keyboard(value):
+    # The client has one surface, thus the event is for the window.
+    current["keyboard"] = value
+    write_state()
+
+
+def on_button(pointer, serial, time, button, state):
+    if state != 1 or "source" in seat_objects:
+        return
+    manager = globals_["data_device_manager"]
+    source = seat_objects["source"] = manager.create_data_source()
+    source.offer("text/plain")
+    source.set_actions(WlDataDeviceManager.dnd_action.copy.value)
+    # The drag ends without a target (cancelled) or after a drop: the window
+    # closes.
+    source.dispatcher["cancelled"] = lambda source: closed.append(True)
+    source.dispatcher["dnd_finished"] = lambda source: closed.append(True)
+    device = seat_objects["data_device"] = manager.get_data_device(globals_["seat"])
+    device.start_drag(source, surface, None, serial)
 
 
 registry = display.get_registry()
 registry.dispatcher["global"] = on_global
+
 display.roundtrip()
 
 wm_base = globals_["wm_base"]
@@ -59,8 +110,24 @@ if "--maximize" in flags:
     toplevel.set_maximized()
 
 # The state of the last toplevel configure. xdg_surface.configure applies it.
-pending = {"width": 0, "height": 0, "maximized": False}
+pending = {"width": 0, "height": 0, "maximized": False, "activated": False}
+# The state that the window has now.
+current = {"width": 0, "height": 0, "maximized": False, "activated": False, "keyboard": False}
 buffers = []
+
+
+def write_state():
+    # Before the first configure, the window has no state.
+    if current["width"] == 0:
+        return
+    # Write a new file and rename it, thus a reader never sees half a line.
+    tmp = state_file + ".tmp"
+    with open(tmp, "w") as f:
+        f.write(
+            f"maximized={int(current['maximized'])} activated={int(current['activated'])} "
+            f"keyboard={int(current['keyboard'])} width={current['width']} height={current['height']}\n"
+        )
+    os.rename(tmp, state_file)
 
 
 def on_toplevel_configure(toplevel, width, height, states):
@@ -69,6 +136,7 @@ def on_toplevel_configure(toplevel, width, height, states):
     # The states are an array of uint32 values in the byte order of the host.
     values = [int.from_bytes(states[i : i + 4], sys.byteorder) for i in range(0, len(states), 4)]
     pending["maximized"] = XdgToplevel.state.maximized.value in values
+    pending["activated"] = XdgToplevel.state.activated.value in values
 
 
 def make_buffer(width, height):
@@ -94,15 +162,15 @@ def on_surface_configure(xdg_surface, serial):
     surface.attach(make_buffer(width, height), 0, 0)
     surface.damage(0, 0, width, height)
     surface.commit()
-    # Write a new file and rename it, thus a reader never sees half a line.
-    tmp = state_file + ".tmp"
-    with open(tmp, "w") as f:
-        f.write(f"maximized={int(pending['maximized'])} width={width} height={height}\n")
-    os.rename(tmp, state_file)
+    current.update(pending, width=width, height=height)
+    write_state()
 
 
 toplevel.dispatcher["configure"] = on_toplevel_configure
-toplevel.dispatcher["close"] = lambda toplevel: sys.exit(0)
+# sys.exit in a callback of pywayland does not stop the client. The main loop
+# stops after the dispatch.
+closed = []
+toplevel.dispatcher["close"] = lambda toplevel: closed.append(True)
 xdg_surface.dispatcher["configure"] = on_surface_configure
 surface.commit()
 
@@ -125,3 +193,8 @@ while True:
         continue
     if readable and display.dispatch(block=True) == -1:
         sys.exit(1)
+    if closed:
+        # The finalizers of pywayland can crash after a drag. Stop without
+        # them.
+        display.flush()
+        os._exit(0)
