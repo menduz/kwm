@@ -48,6 +48,7 @@ expect_size() {
 
 open a
 expect a 1 "one tiled window fills the output, thus it is maximized"
+expect_state a " can_maximize=1 " "a tiled window alone can maximize itself"
 # The exclusive area of the output: the headless output less the bar.
 full=$(cat "$work/a.state")
 full_width=$(sed -E 's/.* width=([0-9]+).*/\1/' <<<"$full")
@@ -56,9 +57,12 @@ full_height=$(sed -E 's/.* height=([0-9]+).*/\1/' <<<"$full")
 open b --maximize
 expect b 0 "a tiled window that asks to be maximized at start is not maximized"
 expect a 0 "the first window no longer fills the output"
+expect_state a " can_maximize=0 " "next to another tiled window, a tiled window cannot maximize itself"
+expect_state b " can_maximize=0 " "the new tiled window cannot maximize itself either"
 
 close b
 expect a 1 "the first window fills the output again"
+expect_state a " can_maximize=1 " "alone again, the tiled window can maximize itself"
 
 # Some clients ask again to be maximized, for example when their window shows
 # again after a change of tag. kwm must not maximize such a window itself: a
@@ -66,16 +70,36 @@ expect a 1 "the first window fills the output again"
 kill -USR1 "${client[a]}"
 expect_size a "$full_width" "$full_height" "a window that fills the output and asks to be maximized keeps all of the output"
 
+# A window does not maximize itself over other tiled windows of its
+# workspace.
 open c
 expect c 0 "a second tiled window is not maximized"
 kill -USR1 "${client[c]}"
-expect c 1 "a mapped window that asks to be maximized is maximized"
+expect c 0 "a tiled window does not maximize itself next to another tiled window"
 expect a 0 "the other window stays unmaximized"
-kill -USR2 "${client[c]}"
-expect c 0 "a window that asks to be unmaximized is unmaximized"
 
+# A floating window maximizes itself only alone in its workspace.
 open d --fixed --maximize
-expect d 1 "a floating window that asks to be maximized at start is maximized"
+expect d 0 "a floating window does not maximize itself at start over tiled windows"
+expect_state d " can_maximize=0 tiled=0 " "a floating window with other windows cannot maximize itself"
+kill -USR1 "${client[d]}"
+expect d 0 "a floating window does not maximize itself over tiled windows"
+
+close a
+close c
+expect_state d " can_maximize=1 tiled=0 " "a floating window alone can maximize itself"
+kill -USR1 "${client[d]}"
+expect_state d "^maximized=1 .* tiled=1 width=$full_width height=$full_height$" \
+  "a maximized floating window stops floating and fills the output"
+
+open f
+expect_state d "^maximized=0 .* tiled=1 " "the maximized window stays tiled next to a new window"
+close f
+close d
+
+open e --fixed --maximize
+expect_state e "^maximized=1 .* tiled=1 width=$full_width height=$full_height$" \
+  "a floating window alone that asks to be maximized at start stops floating and fills the output"
 
 if [ "$failed" -ne 0 ]; then
   echo "kwm-test-maximize: the log of kwm:" >&2

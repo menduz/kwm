@@ -1,12 +1,15 @@
 # A Wayland client for the tests of kwm. It shows one xdg-shell window and
 # writes the last state that the compositor gives it to a file:
 #
-#     maximized=1 activated=1 keyboard=1 width=1280 height=696
+#     maximized=1 activated=1 keyboard=1 can_maximize=1 tiled=1 width=1280 height=696
 #
 # activated is the xdg_toplevel state: river gives it to the window that river
 # knows as focused. keyboard is 1 between wl_keyboard.enter and
 # wl_keyboard.leave. The seat has a keyboard only with test-input.py. During a
 # drag, wlroots drops the keyboard enter, thus the two values can differ.
+# can_maximize is the maximize capability of xdg_toplevel.wm_capabilities
+# (without the event, a window has all capabilities). tiled is 1 when the
+# window has a tiled state: kwm gives it to a window that is not floating.
 #
 # Usage: test-client.py <name> <state file> [--maximize] [--fixed] [--drag]
 #
@@ -45,7 +48,8 @@ def on_global(registry, id_, interface, version):
     elif interface == "wl_shm":
         globals_["shm"] = registry.bind(id_, WlShm, 1)
     elif interface == "xdg_wm_base":
-        globals_["wm_base"] = registry.bind(id_, XdgWmBase, 1)
+        # wm_capabilities comes with version 5.
+        globals_["wm_base"] = registry.bind(id_, XdgWmBase, min(version, 5))
     elif interface == "wl_data_device_manager":
         globals_["data_device_manager"] = registry.bind(id_, WlDataDeviceManager, 3)
     elif interface == "wl_seat" and "seat" not in globals_:
@@ -110,9 +114,17 @@ if "--maximize" in flags:
     toplevel.set_maximized()
 
 # The state of the last toplevel configure. xdg_surface.configure applies it.
-pending = {"width": 0, "height": 0, "maximized": False, "activated": False}
+pending = {"width": 0, "height": 0, "maximized": False, "activated": False, "tiled": False, "can_maximize": True}
 # The state that the window has now.
-current = {"width": 0, "height": 0, "maximized": False, "activated": False, "keyboard": False}
+current = {
+    "width": 0,
+    "height": 0,
+    "maximized": False,
+    "activated": False,
+    "keyboard": False,
+    "tiled": False,
+    "can_maximize": True,
+}
 buffers = []
 
 
@@ -125,7 +137,8 @@ def write_state():
     with open(tmp, "w") as f:
         f.write(
             f"maximized={int(current['maximized'])} activated={int(current['activated'])} "
-            f"keyboard={int(current['keyboard'])} width={current['width']} height={current['height']}\n"
+            f"keyboard={int(current['keyboard'])} can_maximize={int(current['can_maximize'])} "
+            f"tiled={int(current['tiled'])} width={current['width']} height={current['height']}\n"
         )
     os.rename(tmp, state_file)
 
@@ -137,6 +150,19 @@ def on_toplevel_configure(toplevel, width, height, states):
     values = [int.from_bytes(states[i : i + 4], sys.byteorder) for i in range(0, len(states), 4)]
     pending["maximized"] = XdgToplevel.state.maximized.value in values
     pending["activated"] = XdgToplevel.state.activated.value in values
+    tiled_states = (
+        XdgToplevel.state.tiled_left,
+        XdgToplevel.state.tiled_right,
+        XdgToplevel.state.tiled_top,
+        XdgToplevel.state.tiled_bottom,
+    )
+    pending["tiled"] = any(state.value in values for state in tiled_states)
+
+
+def on_wm_capabilities(toplevel, capabilities):
+    # The capabilities stay until the next wm_capabilities event.
+    values = [int.from_bytes(capabilities[i : i + 4], sys.byteorder) for i in range(0, len(capabilities), 4)]
+    pending["can_maximize"] = XdgToplevel.wm_capabilities.maximize.value in values
 
 
 def make_buffer(width, height):
@@ -167,6 +193,7 @@ def on_surface_configure(xdg_surface, serial):
 
 
 toplevel.dispatcher["configure"] = on_toplevel_configure
+toplevel.dispatcher["wm_capabilities"] = on_wm_capabilities
 # sys.exit in a callback of pywayland does not stop the client. The main loop
 # stops after the dispatch.
 closed = []

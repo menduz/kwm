@@ -92,6 +92,9 @@ maximize: bool = false,
 /// The maximized state that the client asks for and knows. Refer to
 /// maximize.zig.
 maximize_state: MaximizeState = .{},
+/// The maximize capability that the client knows. null: kwm did not send the
+/// capabilities yet.
+maximize_capability: ?bool = null,
 floating: bool = false,
 sticky: bool = false,
 hidden: bool = false,
@@ -520,6 +523,56 @@ fn fills_output(self: *const Self) bool {
 }
 
 
+/// The place of the window in its workspace: the windows on the visible tags
+/// of its output. Refer to maximize.zig.
+fn workspace_place(self: *Self) maximize_zig.Place {
+    var result: maximize_zig.Place = .{
+        .tiled = self.managed_by_layout(),
+        .tiling_layout = if (self.output) |output| output.current_layout() != .float else true,
+        .fills_output = self.fills_output(),
+        .other_tiled = false,
+        .other_window = false,
+    };
+    const output = self.output orelse return result;
+    var it = ctx.windows.safeIterator(.forward);
+    while (it.next()) |window| {
+        if (window == self or !window.is_visible_in(output)) continue;
+        result.other_window = true;
+        if (window.managed_by_layout()) result.other_tiled = true;
+    }
+    return result;
+}
+
+
+/// Do what maximize.zig gives for a request of the client.
+fn apply_maximize_action(self: *Self, action: maximize_zig.Action) void {
+    switch (action) {
+        .none => {},
+        .maximize => self.toggle_maximize(true),
+        .unmaximize => self.toggle_maximize(false),
+        .tile => self.toggle_floating(false),
+    }
+}
+
+
+/// Give the window the maximize capability only when it can maximize itself.
+/// The client can then hide its maximize button. Refer to maximize.zig.
+fn sync_capabilities(self: *Self) void {
+    const maximize = maximize_zig.can_maximize(self.workspace_place());
+    if (self.maximize_capability == maximize) return;
+    self.maximize_capability = maximize;
+
+    log.debug("<{*}> maximize capability: {}", .{ self, maximize });
+
+    self.rwm_window.setCapabilities(.{
+        .window_menu = false,
+        .maximize = maximize,
+        .fullscreen = true,
+        .minimize = false,
+    });
+}
+
+
 /// Tell the client that it is maximized when kwm maximizes it, and also when
 /// it fills the output. The client then draws no frame. The win98 GTK theme
 /// also hides the default title bar of a maximized window.
@@ -731,17 +784,22 @@ pub fn ensure_floating(self: *Self) void {
 
 
 pub fn toggle_floating(self: *Self, flag: ?bool) void {
-    self.floating =
-        if (flag) |floating| (if (self.floating != floating) floating else return)
-        else !self.floating;
-    self.layer_managed = false;
-    self.floating_changed = true;
-
-    log.debug("<{*}> toggle floating: {}", .{ self, self.floating });
+    const floating = flag orelse !self.floating;
+    if (self.floating == floating) return;
+    self.set_floating(floating);
 
     // A window that kwm maximizes ignores the layout and the floating state.
     // Thus a change of the floating state also ends the maximized state.
     self.toggle_maximize(false);
+}
+
+
+fn set_floating(self: *Self, floating: bool) void {
+    self.floating = floating;
+    self.layer_managed = false;
+    self.floating_changed = true;
+
+    log.debug("<{*}> set floating: {}", .{ self, self.floating });
 
     if (comptime build_options.bar_enabled) {
         if (self.output) |output| {
@@ -773,6 +831,14 @@ pub fn toggle_maximize(self: *Self, flag: ?bool) void {
         else !self.maximize;
 
     log.debug("<{*}> toggle maximize: {}", .{ self, self.maximize });
+
+    // In a tiling layout, a maximized window is not floating. It stays tiled
+    // after it loses the maximized state.
+    if (self.maximize and self.floating) {
+        if (self.output) |output| {
+            if (output.current_layout() != .float) self.set_floating(false);
+        }
+    }
 
     self.append_event(.{ .maximize = self.maximize });
 
@@ -847,22 +913,22 @@ pub fn handle_events(self: *Self) void {
             .init => {
                 log.debug("<{*}> managing new window", .{ self });
 
-                self.rwm_window.setCapabilities(.{
-                    .window_menu = false,
-                    .maximize = true,
-                    .fullscreen = true,
-                    .minimize = false,
-                });
-
                 if (self.parent != null) {
                     self.toggle_floating(true);
                 }
 
                 self.apply_rules();
 
-                if (self.maximize_state.init(self.managed_by_layout())) {
-                    log.debug("<{*}> maximized at start", .{ self });
-                    self.maximize = true;
+                switch (self.maximize_state.init(self.workspace_place())) {
+                    .none, .unmaximize => {},
+                    .maximize => {
+                        log.debug("<{*}> maximized at start", .{ self });
+                        self.maximize = true;
+                    },
+                    .tile => {
+                        log.debug("<{*}> maximized at start: tiled", .{ self });
+                        self.toggle_floating(false);
+                    },
                 }
 
                 // The decoration of a window rule comes first. A client that
@@ -1049,6 +1115,7 @@ pub fn manage(self: *Self) void {
     log.debug("<{*}> managing, propose dimensions: (width: {}, height: {})", .{ self, self.width, self.height });
 
     self.sync_maximized();
+    self.sync_capabilities();
 
     if (self.geometry_undefined) {
         self.rwm_window.proposeDimensions(0, 0);
@@ -1430,16 +1497,12 @@ fn rwm_window_listener(rwm_window: *river.WindowV1, event: river.WindowV1.Event,
         .maximize_requested => {
             log.debug("<{*}> maximize requested", .{ window });
 
-            if (window.maximize_state.request(true, window.fills_output())) |flag| {
-                window.toggle_maximize(flag);
-            }
+            window.apply_maximize_action(window.maximize_state.request(true, window.workspace_place()));
         },
         .unmaximize_requested => {
             log.debug("<{*}> unmaximize requested", .{ window });
 
-            if (window.maximize_state.request(false, window.fills_output())) |flag| {
-                window.toggle_maximize(flag);
-            }
+            window.apply_maximize_action(window.maximize_state.request(false, window.workspace_place()));
         },
         .minimize_requested => {
             log.debug("<{*}> minimize requested", .{ window });
