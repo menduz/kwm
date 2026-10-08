@@ -305,15 +305,15 @@
             .outline = .all,
             .focus = .{ .face = 0xc0c0c0ff, .highlight = 0xffffffff, .shadow = 0x808080ff, .frame = 0x000000ff, .outline = 0x000080ff },
             .unfocus = .{ .face = 0xc0c0c0ff, .highlight = 0xffffffff, .shadow = 0x808080ff, .frame = 0x000000ff, .outline = 0x00000000 },
-            // read the colors above from the @define-color lines of gtk-3.0/gtk.css of the
-            // current GTK theme (GTK_THEME at start); a color that the file lacks keeps the
-            // value above; null to use only the values above
+            // read the colors above from xfwm4/themerc of the current GTK theme (GTK_THEME
+            // at start), by key; a color that the file lacks keeps the value above; null to
+            // use only the values above
             .gtk_colors = .{
-                .face = "bg_color",
-                .highlight = "light_shadow",
-                .shadow = "dark_shadow",
-                .frame = "borders",
-                .focus_outline = "wm_active_title",
+                .face = "active_color_2",
+                .highlight = "active_hilight_2",
+                .shadow = "active_shadow_2",
+                .frame = "active_border_color",
+                .focus_outline = "active_color_1",
                 .unfocus_outline = null,
             },
         },

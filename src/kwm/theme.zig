@@ -1,9 +1,10 @@
-//! The current GTK theme, for the colors of the raised border. Refer to
-//! `border.raised.gtk_colors` in the configuration.
+//! The current GTK theme, for the colors of the raised border and of the
+//! title bars. Refer to `border.raised.gtk_colors` in the configuration.
 //!
 //! At the start, the name comes from GTK_THEME. `set_gtk_theme` gives a new
-//! name at run time. kwm reads the `@define-color` lines of
-//! gtk-3.0/gtk.css of that theme. GTK looks for a theme in the same folders.
+//! name at run time. kwm reads the colors of xfwm4/themerc of that theme
+//! (refer to themerc.zig), in the folders where GTK looks for a theme. A
+//! themerc is a simple list of keys; the CSS of GTK is not.
 
 const std = @import("std");
 const fmt = std.fmt;
@@ -14,10 +15,11 @@ const posix = @import("posix");
 const config = @import("config");
 
 const Context = @import("context.zig");
+const themerc = @import("themerc.zig");
 
 const ctx = Context.get();
 
-/// The colors of gtk.css, by name, as 0xRRGGBBAA.
+/// The colors of xfwm4/themerc, by key, as 0xRRGGBBAA.
 const Colors = std.StringHashMapUnmanaged(u32);
 
 var gtk_theme: ?[]u8 = null;
@@ -111,22 +113,23 @@ pub const TitleColors = struct {
 /// Without a theme, the colors of the Windows Standard scheme.
 pub fn title_colors_of(name: ?[]const u8, focused: bool) TitleColors {
     const map = colors_of(name);
-    const button_text = map.get("button_fg_color") orelse map.get("fg_color") orelse 0x000000ff;
+    const button_text = map.get("buttons_color") orelse 0x000000ff;
     if (focused) {
-        const solid = map.get("wm_active_title") orelse 0x000080ff;
+        const start = map.get("active_color_1") orelse 0x000080ff;
         return .{
-            .start = map.get("active_title_color") orelse solid,
-            .end = map.get("active_title_color1") orelse if (map.contains("wm_active_title")) solid else 0x1084d0ff,
-            .text = map.get("wm_active_title_text") orelse 0xffffffff,
+            .start = start,
+            // A theme without the gradient color has a caption of one color.
+            .end = map.get("active_gradient_color") orelse
+                if (map.contains("active_color_1")) start else 0x1084d0ff,
+            .text = map.get("active_text_color") orelse 0xffffffff,
             .button_text = button_text,
         };
     }
-    // The theme paints the caption of an inactive window in one color.
-    const solid = map.get("wm_inactive_title") orelse 0x808080ff;
+    const start = map.get("inactive_color_1") orelse 0x808080ff;
     return .{
-        .start = solid,
-        .end = solid,
-        .text = map.get("wm_inactive_title_text") orelse 0xc0c0c0ff,
+        .start = start,
+        .end = map.get("inactive_gradient_color") orelse start,
+        .text = map.get("inactive_text_color") orelse 0xc0c0c0ff,
         .button_text = button_text,
     };
 }
@@ -159,86 +162,59 @@ fn clear_colors(map: *Colors) void {
 }
 
 
-/// Read the colors of the theme `name` into `map`. Without a theme file, the
-/// borders use `focus` and `unfocus` of the configuration.
+/// Read the colors of the theme `name` into `map`: the colors of its
+/// xfwm4/themerc. Refer to themerc.zig. Without the file, the borders and the
+/// title bars use the colors of the configuration and of Windows Standard.
 fn load(map: *Colors, name: []const u8) void {
     clear_colors(map);
 
-    var buffer: [256 * 1024]u8 = undefined;
-    const css = read_theme_css(name, &buffer) orelse {
-        log.warn("GTK theme {s}: no gtk-3.0/gtk.css found", .{ name });
+    var buffer: [64 * 1024]u8 = undefined;
+    const text = read_theme_file(name, &buffer) orelse {
+        log.warn("GTK theme {s}: no xfwm4/themerc found", .{ name });
         return;
     };
 
-    var lines = mem.tokenizeScalar(u8, css, '\n');
-    while (lines.next()) |raw| {
-        // "@define-color name #rrggbb;" Other values, for example mix(),
-        // are not colors that kwm can read.
-        const line = mem.trim(u8, raw, " \t\r");
-        if (!mem.startsWith(u8, line, "@define-color")) continue;
-        var fields = mem.tokenizeAny(u8, line["@define-color".len..], " \t;");
-        const key = fields.next() orelse continue;
-        const value = fields.next() orelse continue;
-        const color = parse_hex(value) orelse continue;
-
-        const owned = ctx.gpa.dupe(u8, key) catch continue;
-        const entry = map.getOrPut(ctx.gpa, owned) catch {
+    var it = themerc.iterate(text);
+    while (it.next()) |entry| {
+        const owned = ctx.gpa.dupe(u8, entry.key) catch continue;
+        const slot = map.getOrPut(ctx.gpa, owned) catch {
             ctx.gpa.free(owned);
             continue;
         };
-        if (entry.found_existing) ctx.gpa.free(owned);
-        entry.value_ptr.* = color;
+        if (slot.found_existing) ctx.gpa.free(owned);
+        slot.value_ptr.* = entry.color;
     }
     log.info("GTK theme {s}: {} colors", .{ name, map.count() });
 }
 
 
-/// "#rrggbb" or "#rgb" to 0xRRGGBBff.
-fn parse_hex(value: []const u8) ?u32 {
-    if (value.len == 0 or value[0] != '#') return null;
-    const digits = value[1..];
-    const rgb: u32 = switch (digits.len) {
-        6 => fmt.parseInt(u32, digits, 16) catch return null,
-        3 => blk: {
-            var v: u32 = 0;
-            for (digits) |d| {
-                const n = fmt.charToDigit(d, 16) catch return null;
-                v = (v << 8) | (n * 17);
-            }
-            break :blk v;
-        },
-        else => return null,
-    };
-    return (rgb << 8) | 0xff;
-}
-
-
-/// Find gtk-3.0/gtk.css of the theme in the folders that GTK searches.
-fn read_theme_css(name: []const u8, buffer: []u8) ?[]const u8 {
+/// Find xfwm4/themerc of the theme in the folders that GTK searches for the
+/// theme.
+fn read_theme_file(name: []const u8, buffer: []u8) ?[]const u8 {
     const home = ctx.env.get("HOME") orelse "";
     var path_buffer: [4096]u8 = undefined;
 
     // $XDG_DATA_HOME/themes, ~/.themes, then $XDG_DATA_DIRS/themes.
     const data_home = ctx.env.get("XDG_DATA_HOME");
     if (data_home) |dir| {
-        if (read_css(&path_buffer, buffer, dir, "/themes", name)) |css| return css;
+        if (read_file(&path_buffer, buffer, dir, "/themes", name)) |text| return text;
     } else {
-        if (read_css(&path_buffer, buffer, home, "/.local/share/themes", name)) |css| return css;
+        if (read_file(&path_buffer, buffer, home, "/.local/share/themes", name)) |text| return text;
     }
-    if (read_css(&path_buffer, buffer, home, "/.themes", name)) |css| return css;
+    if (read_file(&path_buffer, buffer, home, "/.themes", name)) |text| return text;
 
     const data_dirs = ctx.env.get("XDG_DATA_DIRS") orelse "/usr/local/share:/usr/share";
     var dirs = mem.tokenizeScalar(u8, data_dirs, ':');
     while (dirs.next()) |dir| {
-        if (read_css(&path_buffer, buffer, dir, "/themes", name)) |css| return css;
+        if (read_file(&path_buffer, buffer, dir, "/themes", name)) |text| return text;
     }
     return null;
 }
 
 
-fn read_css(path_buffer: []u8, buffer: []u8, dir: []const u8, sub: []const u8, name: []const u8) ?[]const u8 {
+fn read_file(path_buffer: []u8, buffer: []u8, dir: []const u8, sub: []const u8, name: []const u8) ?[]const u8 {
     if (dir.len == 0) return null;
-    const path = fmt.bufPrintZ(path_buffer, "{s}{s}/{s}/gtk-3.0/gtk.css", .{ dir, sub, name }) catch return null;
+    const path = fmt.bufPrintZ(path_buffer, "{s}{s}/{s}/xfwm4/themerc", .{ dir, sub, name }) catch return null;
 
     const fd = posix.openZ(path, .{ .ACCMODE = .RDONLY, .CLOEXEC = true }, 0) catch return null;
     defer posix.close(fd);

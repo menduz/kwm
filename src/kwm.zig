@@ -180,4 +180,5 @@ test {
     _ = @import("kwm/maximize.zig");
     _ = @import("kwm/refocus.zig");
     _ = @import("kwm/sandbox.zig");
+    _ = @import("kwm/themerc.zig");
 }

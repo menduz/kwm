@@ -108,18 +108,17 @@ pub const Config = struct {
             outline: enum { all, sandboxes, csd, none } = .all,
             focus: Bevel = .{ .outline = 0x000080ff },
             unfocus: Bevel = .{},
-            /// Read the colors from the `@define-color` lines of gtk-3.0/gtk.css
-            /// of the current GTK theme. Each field names a color of that
-            /// file. A color that the file does not give comes from `focus`
-            /// and `unfocus` above. null: use only `focus` and `unfocus`.
-            /// Refer to theme.zig.
+            /// Read the colors from xfwm4/themerc of the current GTK theme.
+            /// Each field is a key of that file. A color that the file does
+            /// not give comes from `focus` and `unfocus` above. null: use only
+            /// `focus` and `unfocus`. Refer to theme.zig and themerc.zig.
             gtk_colors: ?struct {
-                face: []const u8 = "bg_color",
-                highlight: []const u8 = "light_shadow",
-                shadow: []const u8 = "dark_shadow",
-                frame: []const u8 = "borders",
+                face: []const u8 = "active_color_2",
+                highlight: []const u8 = "active_hilight_2",
+                shadow: []const u8 = "active_shadow_2",
+                frame: []const u8 = "active_border_color",
                 /// null: the outline comes from `focus` and `unfocus`.
-                focus_outline: ?[]const u8 = "wm_active_title",
+                focus_outline: ?[]const u8 = "active_color_1",
                 unfocus_outline: ?[]const u8 = null,
             } = .{},
         } = .{},
