@@ -142,6 +142,50 @@ else
   failed=1
 fi
 
+# floating_caption <png>: the caption of the floating window, as "x y rows".
+# A press focuses the window, thus its caption is the gradient after it.
+floating_caption() {
+  local focused unfocused
+  focused=$(caption f "$1" 000080 1084d0 300)
+  unfocused=$(caption f "$1" 808080)
+  if [ "${focused##* }" = 18 ]; then echo "$focused"; else echo "$unfocused"; fi
+}
+
+# drag <from x> <from y> <to x> <to y>: press, move and release the button.
+drag() {
+  input move "$1" "$2"
+  input press
+  input move "$3" "$4"
+  input release
+}
+
+# expect_caption_at <x> <y> <description>: the caption of the floating window
+# starts at x, y.
+expect_caption_at() {
+  local at=""
+  for _ in $(seq 25); do
+    sleep 0.2
+    grim "$work/drag.png"
+    read -r cx cy _ <<<"$(floating_caption "$work/drag.png")"
+    at="$cx $cy"
+    if [ "$at" = "$1 $2" ]; then
+      echo "ok: $3"
+      return
+    fi
+  done
+  echo "FAIL: $3 (the caption is at $at, not at $1 $2)"
+  failed=1
+}
+
+# A drag on the title bar or on the border of a floating window moves it.
+read -r fx fy _ <<<"$(floating_caption "$work/floating.png")"
+drag $((fx + 40)) $((fy + 9)) $((fx + 140)) $((fy + 59))
+expect_caption_at $((fx + 100)) $((fy + 50)) "a drag on the title bar moves the floating window"
+# The flat border of 2 pixels is at the left of the caption.
+fx=$((fx + 100)) fy=$((fy + 50))
+drag $((fx - 1)) $((fy + 40)) $((fx - 61)) $((fy + 40))
+expect_caption_at $((fx - 60)) "$fy" "a drag on the border moves the floating window"
+
 if [ "$failed" -ne 0 ]; then
   echo "kwm-test-title-bar: the log of kwm:" >&2
   grep -E "title_bar|decoration|close" "$work/river.log" | tail -40 >&2 || true

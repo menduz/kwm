@@ -219,6 +219,8 @@ pub fn destroy(self: *Self) void {
         while (it.next()) |seat| {
             // The keyboard can be on this window after a drag. Refer to
             // refocus.zig.
+            if (seat.decoration_move == self) seat.decoration_move = null;
+
             seat.refocus.window_closed(switch (seat.previous_focused) {
                 .window => |window| if (self == window) .this_window else .other_window,
                 .none, .output => .none,
@@ -542,6 +544,25 @@ fn sync_decoration(self: *Self) void {
         .csd => self.rwm_window.useCsd(),
         .ssd => self.rwm_window.useSsd(),
     }
+}
+
+
+/// True when `surface` is a surface of a decoration that kwm draws for the
+/// window: the title bar, or the border and its strips. A press on it can
+/// move a floating window. Refer to seat.zig.
+pub fn owns_decoration(self: *const Self, surface: *wl.Surface) bool {
+    if (comptime build_options.bar_enabled) {
+        if (self.title_bar) |*title_bar| {
+            if (title_bar.wl_surface == surface) return true;
+        }
+    }
+    if (self.raised_border) |*raised| {
+        if (raised.wl_surface == surface) return true;
+        for (&raised.strips) |*strip| {
+            if (strip.wl_surface == surface) return true;
+        }
+    }
+    return false;
 }
 
 

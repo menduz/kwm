@@ -56,6 +56,14 @@ pub fn has_title_bar(window: Window) bool {
 }
 
 
+/// A press on the title bar or on the border of a floating window moves the
+/// window, as the pointer_move binding does. The layout places a tiled
+/// window, and a maximized or fullscreen window does not move.
+pub fn drag_moves(window: struct { floating: bool, maximized: bool, fullscreen: bool }) bool {
+    return window.floating and !window.maximized and !window.fullscreen;
+}
+
+
 pub const Rect = struct {
     x: i32,
     y: i32,
@@ -256,4 +264,11 @@ test "button_pixel: the edges of the pressed button are the same at the top and 
     // The bottom and the right edges are the highlight.
     for (0..button_width) |x| try testing.expectEqual(Pixel.highlight, button_pixel(true, x, button_height - 1));
     for (0..button_height) |y| try testing.expectEqual(Pixel.highlight, button_pixel(true, button_width - 1, y));
+}
+
+test "drag_moves: only a floating window that is not maximized or fullscreen" {
+    try testing.expect(drag_moves(.{ .floating = true, .maximized = false, .fullscreen = false }));
+    try testing.expect(!drag_moves(.{ .floating = false, .maximized = false, .fullscreen = false }));
+    try testing.expect(!drag_moves(.{ .floating = true, .maximized = true, .fullscreen = false }));
+    try testing.expect(!drag_moves(.{ .floating = true, .maximized = false, .fullscreen = true }));
 }

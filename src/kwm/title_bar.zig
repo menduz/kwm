@@ -297,26 +297,30 @@ fn find(surface: *wl.Surface) ?struct { window: *Window, title_bar: *Self } {
 
 
 /// A pointer button changed on the surface `surface` of kwm, at `x`, `y` in
-/// logical pixels. Returns true for the surface of a title bar.
+/// logical pixels. Returns true when the close button takes the event: a
+/// press on it, or the release after that press. A press on another part of
+/// a title bar can move the window (refer to seat.zig).
 pub fn pointer_button(surface: *wl.Surface, x: i32, y: i32, pressed: bool) bool {
     const found = find(surface) orelse return false;
     const self = found.title_bar;
-    const d = self.drawn orelse return true;
+    const d = self.drawn orelse return false;
     const on_button = decoration.close_button(d.width).contains(x, y);
 
     if (pressed) {
-        if (on_button and !self.pressed) {
+        if (!on_button) return false;
+        if (!self.pressed) {
             self.pressed = true;
             ctx.manage_dirty(@src());
         }
-    } else if (self.pressed) {
-        self.pressed = false;
-        if (on_button) {
-            log.debug("<{*}> close {*}", .{ self, found.window });
-            self.close_requested = true;
-        }
-        ctx.manage_dirty(@src());
+        return true;
     }
+    if (!self.pressed) return false;
+    self.pressed = false;
+    if (on_button) {
+        log.debug("<{*}> close {*}", .{ self, found.window });
+        self.close_requested = true;
+    }
+    ctx.manage_dirty(@src());
     return true;
 }
 

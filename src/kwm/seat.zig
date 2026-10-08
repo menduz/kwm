@@ -26,6 +26,7 @@ const Context = @import("context.zig");
 const ShellSurface = @import("shell_surface.zig");
 const floating_zig = @import("floating.zig");
 const refocus_zig = @import("refocus.zig");
+const decoration_zig = @import("decoration.zig");
 const SandboxLabel = if (build_options.bar_enabled) @import("sandbox_label.zig") else void;
 const TitleBar = if (build_options.bar_enabled) @import("title_bar.zig") else void;
 
@@ -67,6 +68,9 @@ previous_focused: union(enum) {
 } = .none,
 /// Clear the focus once after a window closes. Refer to refocus.zig.
 refocus: refocus_zig.State = .{},
+/// A press on the title bar or on the border of this floating window. The
+/// next manage sequence starts to move it, as the pointer_move binding does.
+decoration_move: ?*Window = null,
 pointer_position: struct {
     x: i32 = 0,
     y: i32 = 0,
@@ -212,6 +216,13 @@ pub fn manage(self: *Self) void {
     defer log.debug("<{*}> managed", .{ self });
 
     defer self.pointer_position.new = false;
+
+    // A press on a decoration of a floating window moves it.
+    if (self.decoration_move) |window| {
+        self.decoration_move = null;
+        self.window_interaction(window);
+        window.prepare_move(.{ .start = .{ .seat = self } });
+    }
 
     // TODO: https://codeberg.org/river/river/issues/1317
     // if ctx.cfg.sloppy_focus is true, once pointer activity, check window_below_pointer.new,
@@ -1162,16 +1173,33 @@ fn wl_pointer_listener(wl_pointer: *wl.Pointer, event: wl.Pointer.Event, seat: *
 
             seat.button = @enumFromInt(data.button);
 
+            const pressed = data.state == .pressed;
+            const surface = seat.pointer_surface orelse return;
+
             // The close button of a title bar.
             if (comptime build_options.bar_enabled) {
-                if (seat.pointer_surface) |surface| {
-                    _ = TitleBar.pointer_button(
-                        surface,
-                        seat.pointer_surface_x,
-                        seat.pointer_surface_y,
-                        data.state == .pressed,
-                    );
+                if (TitleBar.pointer_button(surface, seat.pointer_surface_x, seat.pointer_surface_y, pressed)) return;
+            }
+
+            // The title bar or the border of a floating window: a press moves
+            // the window in the next manage sequence. A release before it
+            // ends the move.
+            if (!pressed) {
+                seat.decoration_move = null;
+                return;
+            }
+            var it = ctx.windows.safeIterator(.forward);
+            while (it.next()) |window| {
+                if (!window.owns_decoration(surface)) continue;
+                if (decoration_zig.drag_moves(.{
+                    .floating = !window.managed_by_layout(),
+                    .maximized = window.maximize,
+                    .fullscreen = window.fullscreen != .none,
+                })) {
+                    seat.decoration_move = window;
+                    ctx.manage_dirty(@src());
                 }
+                break;
             }
         },
         .enter => |data| {
