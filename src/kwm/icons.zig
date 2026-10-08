@@ -153,7 +153,13 @@ fn find(name: []const u8, theme_path: []const u8, size: i32, color: u32) ?Icon {
 
     const base = if (mem.endsWith(u8, name, symbolic_suffix)) name[0 .. name.len - symbolic_suffix.len] else name;
 
-    // 1. The symbolic icon, from the icon theme.
+    // 1. The symbolic icon, from the icon theme. kwm prefers symbolic icons
+    // on purpose: the tray draws them in the color of the text, so they look
+    // alike. The order of the themes comes from the Inherits lines: for
+    // win-classic-theme, the symbolic icons of the win98 themes (SE98,
+    // Chicago95) first, then those of Papirus, then Adwaita. A regular icon
+    // of a theme does not come before a symbolic icon of a theme that it
+    // inherits.
     var variant = base;
     while (true) {
         if (std.fmt.bufPrint(&symbolic_buffer, "{s}" ++ symbolic_suffix, .{ variant })) |symbolic| {
