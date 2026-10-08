@@ -24,6 +24,8 @@ const MaximizeState = maximize_zig.State;
 const theme = @import("theme.zig");
 const sandbox = @import("sandbox.zig");
 const SandboxLabel = if (build_options.bar_enabled) @import("sandbox_label.zig") else void;
+const TitleBar = if (build_options.bar_enabled) @import("title_bar.zig") else void;
+const decoration_zig = @import("decoration.zig");
 
 pub const Decoration = enum {
     csd,
@@ -119,6 +121,12 @@ sandbox_gtk_theme: ?[]const u8 = null,
 /// label.
 sandbox_has_label: bool = false,
 /// The label of `sandbox.label`. Refer to sandbox_label.zig.
+/// The title bar of a window with server side decorations. Refer to
+/// title_bar.zig.
+title_bar: if (build_options.bar_enabled) ?TitleBar else void =
+    if (build_options.bar_enabled) null else {},
+/// The decorations that the client knows. null: kwm did not send them yet.
+decoration_sent: ?Decoration = null,
 sandbox_label: if (build_options.bar_enabled) ?SandboxLabel else void =
     if (build_options.bar_enabled) null else {},
 /// The width that river gives in the last dimensions event.
@@ -250,6 +258,7 @@ pub fn destroy(self: *Self) void {
         self.raised_border = null;
     }
     self.remove_sandbox_label();
+    self.remove_title_bar();
     self.clear_sandbox();
 
     self.link.remove();
@@ -351,7 +360,7 @@ pub fn move(self: *Self, x: ?i32, y: ?i32) void {
         )
     );
     self.y = @max(
-        ctx.cfg.border.width,
+        ctx.cfg.border.width + self.title_above(),
         @min(
             y orelse self.y,
             self.output.?.exclusive_height()-self.height-ctx.cfg.border.width
@@ -496,7 +505,70 @@ pub fn set_border(self: *Self, width: i32, rgb: u32) void {
 
 /// True when the client draws its own decorations (CSD).
 pub fn uses_csd(self: *const Self) bool {
-    return (self.decoration orelse ctx.cfg.default_window_decoration) == .csd;
+    return self.decoration_mode() == .csd;
+}
+
+
+/// The decorations that kwm asks the client to use: server side
+/// decorations, except for a client without xdg-decoration. `decoration` is
+/// the value of a window rule. Refer to decoration.zig.
+fn decoration_mode(self: *const Self) Decoration {
+    const rule: ?decoration_zig.Mode = if (self.decoration) |d| switch (d) {
+        .csd => .csd,
+        .ssd => .ssd,
+    } else null;
+    const default: decoration_zig.Mode = switch (ctx.cfg.default_window_decoration) {
+        .csd => .csd,
+        .ssd => .ssd,
+    };
+    return switch (decoration_zig.mode(rule, self.decoration_hint == .only_supports_csd, default)) {
+        .csd => .csd,
+        .ssd => .ssd,
+    };
+}
+
+
+/// Tell the client the decorations to use. The decoration hint can change
+/// after the start, for example when the client creates its xdg-decoration
+/// object late.
+fn sync_decoration(self: *Self) void {
+    const mode = self.decoration_mode();
+    if (self.decoration_sent == mode) return;
+    self.decoration_sent = mode;
+
+    log.debug("<{*}> decoration: {s}", .{ self, @tagName(mode) });
+
+    switch (mode) {
+        .csd => self.rwm_window.useCsd(),
+        .ssd => self.rwm_window.useSsd(),
+    }
+}
+
+
+/// True when the window has a title bar. Refer to decoration.zig.
+pub fn has_title_bar(self: *const Self) bool {
+    if (comptime !build_options.bar_enabled) return false;
+    if (!ctx.cfg.title_bar) return false;
+    return decoration_zig.has_title_bar(.{
+        .ssd = !self.uses_csd(),
+        .maximized = self.maximize,
+        .fills_output = self.fills_output(),
+        .fullscreen = self.fullscreen != .none,
+    });
+}
+
+
+/// The height of the title bar in the place of a tiled window. The window
+/// gets the rest of its place.
+fn title_inset(self: *const Self) i32 {
+    return if (self.has_title_bar() and self.managed_by_layout()) decoration_zig.height else 0;
+}
+
+
+/// The height of the title bar above a floating window. A floating window
+/// keeps its own size, and the title bar goes above it.
+fn title_above(self: *const Self) i32 {
+    return if (self.has_title_bar() and !self.managed_by_layout()) decoration_zig.height else 0;
 }
 
 
@@ -605,6 +677,36 @@ fn maximize_border(self: *const Self) i32 {
 /// only the outline. Else it has no border.
 fn render_raised_border(self: *Self) void {
     const border = ctx.cfg.border.width;
+
+    // The flat style: river draws the border around the window only. The
+    // border of a window with a title bar goes around the title bar too, thus
+    // kwm draws it. Refer to `uses_river_border`.
+    if (ctx.cfg.border.style == .flat) {
+        if (self.uses_river_border() or border <= 0) {
+            if (self.raised_border) |*raised| {
+                raised.deinit();
+                self.raised_border = null;
+            }
+            return;
+        }
+        if (self.raised_border == null) {
+            self.raised_border = undefined;
+            self.raised_border.?.init(self) catch |err| {
+                self.raised_border = null;
+                log.err("<{*}> init raised border failed: {}", .{ self, err });
+                return;
+            };
+        }
+        self.raised_border.?.render_flat(
+            self.width,
+            self.height - self.title_inset(),
+            border,
+            decoration_zig.height,
+            self.border_color(if (self.border_focused) ctx.cfg.border.color.focus else ctx.cfg.border.color.unfocus),
+        );
+        return;
+    }
+
     const csd = self.uses_csd();
     const margin = self.csd_margin();
     if (ctx.cfg.border.style != .raised or border <= 0 or self.fullscreen == .output or (csd and margin <= 0)) {
@@ -627,6 +729,13 @@ fn render_raised_border(self: *Self) void {
     // A tiled window with client side decorations draws its frame in the
     // margin and in the border. kwm draws only the outline around it, in the
     // same place as the outline of a window with a raised border.
+    if (csd and !self.shows_outline()) {
+        if (self.raised_border) |*raised| {
+            raised.deinit();
+            self.raised_border = null;
+        }
+        return;
+    }
     if (csd) {
         const bevel = self.border_bevel();
         if (self.raised_border) |*raised| {
@@ -634,26 +743,51 @@ fn render_raised_border(self: *Self) void {
                 @max(self.width - 2 * margin, self.min_width),
                 @max(self.height - 2 * margin, self.min_height),
                 border + margin,
+                0,
+                true,
                 .{ .face = 0, .highlight = 0, .shadow = 0, .frame = 0, .outline = bevel.outline },
             );
         }
         return;
     }
 
-    // A maximized window fills the output, less the border.
+    // A maximized window fills the output, less the border. A tiled window
+    // with a title bar has it at the top of its place, and a floating window
+    // above it: the border goes around the window and the title bar.
     const width, const height = if (self.maximize)
         .{ self.output.?.exclusive_width() - 2 * border, self.output.?.exclusive_height() - 2 * border }
     else
-        .{ self.width, self.height };
+        .{ self.width, self.height - self.title_inset() };
+    const top: i32 = if (self.has_title_bar()) decoration_zig.height else 0;
 
     if (self.raised_border) |*raised| {
         raised.render(
             width,
             height,
             border,
+            top,
+            self.shows_outline(),
             self.border_bevel(),
         );
     }
+}
+
+
+/// river draws the border of the flat style around the window. A window with
+/// a title bar has its border around the title bar too: kwm draws it.
+pub fn uses_river_border(self: *const Self) bool {
+    return ctx.cfg.border.style == .flat and !self.has_title_bar();
+}
+
+
+/// The raised border has the outline of `border.raised.outline`.
+fn shows_outline(self: *const Self) bool {
+    return switch (ctx.cfg.border.raised.outline) {
+        .all => true,
+        .sandboxes => self.sandbox_name != null and self.sandbox_has_label,
+        .csd => self.uses_csd(),
+        .none => false,
+    };
 }
 
 
@@ -716,11 +850,14 @@ fn render_sandbox_label(self: *Self) void {
 
     const name = self.sandbox_name orelse return self.remove_sandbox_label();
     const output = self.output orelse return self.remove_sandbox_label();
+    // A window with a title bar shows the name of its sandbox in the title
+    // bar.
     if (
         !ctx.cfg.sandbox.label
         or !self.sandbox_has_label
         or self.fullscreen != .none
         or self.content_width <= 0
+        or self.has_title_bar()
     ) {
         return self.remove_sandbox_label();
     }
@@ -761,7 +898,51 @@ fn outline_inset(self: *const Self) i32 {
     } else border;
 
     // A ring of 3 pixels or more has the outline in its outside pixel.
-    return if (ring >= 3) ring - 1 else ring;
+    return if (ring >= 3 and self.shows_outline()) ring - 1 else ring;
+}
+
+
+/// Draw, move or remove the title bar. Refer to title_bar.zig.
+fn render_title_bar(self: *Self) void {
+    if (comptime !build_options.bar_enabled) return;
+
+    const output = self.output orelse return self.remove_title_bar();
+    if (!self.has_title_bar() or self.width <= 0) return self.remove_title_bar();
+
+    if (self.title_bar == null) {
+        self.title_bar = undefined;
+        self.title_bar.?.init(self) catch |err| {
+            self.title_bar = null;
+            log.err("<{*}> init title bar failed: {}", .{ self, err });
+            return;
+        };
+    }
+
+    // A window of a sandbox uses the GTK theme of its sandbox, as its border.
+    const theme_name = if (self.sandbox_name != null) self.sandbox_gtk_theme else null;
+    var bevel = theme.bevel_of(theme_name, true);
+    bevel.outline = 0;
+    self.title_bar.?.render(&output.bar, .{
+        .width = self.width,
+        .focused = self.border_focused,
+        .title = self.title orelse "",
+        .sandbox = if (self.sandbox_has_label) if (self.sandbox_name) |name| .{
+            .name = name,
+            .color = self.sandbox_color,
+        } else null else null,
+        .colors = theme.title_colors_of(theme_name, self.border_focused),
+        .bevel = bevel,
+    });
+}
+
+
+fn remove_title_bar(self: *Self) void {
+    if (comptime !build_options.bar_enabled) return;
+
+    if (self.title_bar) |*title_bar| {
+        title_bar.deinit();
+        self.title_bar = null;
+    }
 }
 
 
@@ -936,21 +1117,6 @@ pub fn handle_events(self: *Self) void {
                     },
                 }
 
-                // The decoration of a window rule comes first. A client that
-                // does not use xdg-decoration (for example GTK4) gives
-                // only_supports_csd, but it can draw no decorations at all.
-                switch (self.decoration_hint) {
-                    .only_supports_csd => self.decoration = self.decoration orelse .csd,
-                    .prefers_csd => self.decoration = self.decoration orelse .csd,
-                    .prefers_ssd => self.decoration = self.decoration orelse .ssd,
-                    else => {}
-                }
-
-                switch (self.decoration orelse ctx.cfg.default_window_decoration) {
-                    .csd => self.rwm_window.useCsd(),
-                    .ssd => self.rwm_window.useSsd(),
-                }
-
                 if (!self.managed_by_layout()) {
                     if (self.width > 0 and self.height > 0) {
                         self.center();
@@ -1121,6 +1287,16 @@ pub fn manage(self: *Self) void {
 
     self.sync_maximized();
     self.sync_capabilities();
+    self.sync_decoration();
+
+    if (comptime build_options.bar_enabled) {
+        if (self.title_bar) |*title_bar| {
+            if (title_bar.close_requested) {
+                title_bar.close_requested = false;
+                self.prepare_close();
+            }
+        }
+    }
 
     if (self.geometry_undefined) {
         self.rwm_window.proposeDimensions(0, 0);
@@ -1147,6 +1323,11 @@ pub fn manage(self: *Self) void {
         if (margin > 0) {
             width = @max(width - 2*margin, self.min_width);
             height = @max(height - 2*margin, self.min_height);
+        }
+        // A tiled window keeps the top of its place for its title bar.
+        const inset = self.title_inset();
+        if (inset > 0) {
+            height = @max(height - inset, self.min_height);
         }
         break :blk .{ width, height };
     };
@@ -1178,6 +1359,7 @@ pub fn render(self: *Self) void {
     }
 
     self.render_raised_border();
+    self.render_title_bar();
     self.render_sandbox_label();
 
     var offset_x: i32 = 0;
@@ -1203,7 +1385,7 @@ pub fn render(self: *Self) void {
     }
 
     offset_x += self.csd_margin();
-    offset_y += self.csd_margin();
+    offset_y += self.csd_margin() + self.title_inset();
 
     log.debug("<{*}> rendering to (x: {}, y: {})", .{ self, self.x, self.y });
 
@@ -1214,7 +1396,7 @@ pub fn render(self: *Self) void {
 
     var left = self.x - ctx.cfg.border.width;
     var right = self.x + self.width + ctx.cfg.border.width;
-    var top = self.y - ctx.cfg.border.width;
+    var top = self.y - ctx.cfg.border.width - self.title_above();
     var bottom = self.y + self.height + ctx.cfg.border.width;
     if (
         left < 0

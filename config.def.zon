@@ -275,6 +275,10 @@
     // .ssd
     .default_window_decoration = .ssd,
 
+    // a title bar (the title and a close button, as win-classic-theme) on each window with
+    // server side decorations that is not maximized; kwm always tries server side decorations
+    .title_bar = true,
+
     // window border
     .border = .{
         .width = 2,
@@ -295,6 +299,10 @@
         // own frame, so kwm draws only the outline around it (refer to .csd_margin)
         .style = .flat,
         .raised = .{
+            // the outline of 1 pixel outside the edges (a border of 3 pixels or more):
+            // .all, .sandboxes (only a window of a sandbox, not the host), .csd (only a window
+            // with client side decorations) or .none
+            .outline = .all,
             .focus = .{ .face = 0xc0c0c0ff, .highlight = 0xffffffff, .shadow = 0x808080ff, .frame = 0x000000ff, .outline = 0x000080ff },
             .unfocus = .{ .face = 0xc0c0c0ff, .highlight = 0xffffffff, .shadow = 0x808080ff, .frame = 0x000000ff, .outline = 0x00000000 },
             // read the colors above from the @define-color lines of gtk-3.0/gtk.css of the

@@ -27,6 +27,7 @@ const ShellSurface = @import("shell_surface.zig");
 const floating_zig = @import("floating.zig");
 const refocus_zig = @import("refocus.zig");
 const SandboxLabel = if (build_options.bar_enabled) @import("sandbox_label.zig") else void;
+const TitleBar = if (build_options.bar_enabled) @import("title_bar.zig") else void;
 
 const ctx = Context.get();
 
@@ -1160,6 +1161,18 @@ fn wl_pointer_listener(wl_pointer: *wl.Pointer, event: wl.Pointer.Event, seat: *
             log.debug("<{*}> button: {}, state: {s}", .{ seat, data.button, @tagName(data.state) });
 
             seat.button = @enumFromInt(data.button);
+
+            // The close button of a title bar.
+            if (comptime build_options.bar_enabled) {
+                if (seat.pointer_surface) |surface| {
+                    _ = TitleBar.pointer_button(
+                        surface,
+                        seat.pointer_surface_x,
+                        seat.pointer_surface_y,
+                        data.state == .pressed,
+                    );
+                }
+            }
         },
         .enter => |data| {
             log.debug("<{*}> enter: (surface: {*}, x: {}, y: {})", .{ seat, data.surface, data.surface_x.toInt(), data.surface_y.toInt() });
@@ -1185,6 +1198,9 @@ fn wl_pointer_listener(wl_pointer: *wl.Pointer, event: wl.Pointer.Event, seat: *
             seat.hover_widget();
         },
         .leave => {
+            if (comptime build_options.bar_enabled) {
+                if (seat.pointer_surface) |surface| TitleBar.pointer_leave(surface);
+            }
             seat.pointer_surface = null;
             seat.hover_widget();
         },

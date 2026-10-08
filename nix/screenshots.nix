@@ -1,9 +1,10 @@
 # The screenshots of kwm.
 #
 # `kwm-screenshot` runs river with the headless backend of wlroots and kwm
-# with config.def.zon, then takes a screenshot with grim. Refer to
-# screenshot.sh. `screenshots` runs it in the sandbox, and `update-screenshots`
-# copies the result to screenshots/ in the working tree.
+# with config.def.zon, then takes a screenshot with grim. A preset changes the
+# border and the GTK theme (win-classic-theme). Refer to screenshot.sh.
+# `screenshots` runs it in the sandbox for each preset, and
+# `update-screenshots` copies the result to screenshots/ in the working tree.
 {
   lib,
   runCommand,
@@ -25,6 +26,8 @@
   terminus_font,
   dejavu_fonts,
   nerd-fonts,
+  # The packages of win-classic-theme for the title bar presets.
+  themes,
 }:
 let
   # Fixed values for the CPU, memory, disk and battery widgets.
@@ -81,9 +84,20 @@ let
       export FAKETIME_LIB=${libfaketime}/lib/libfaketime.so.1
       export PRELOAD_LIB=${preload}/lib/kwm-screenshot-preload.so
       export TRAY_SCRIPT=${./screenshot-tray.py}
+      export THEME_DATA_DIRS=${lib.concatMapStringsSep ":" (theme: "${theme}/share") themes}
+      export DEFAULT_CONFIG=${../config.def.zon}
       exec bash ${./screenshot.sh} "$@"
     '';
   };
+
+  # The presets of screenshot.sh.
+  presets = [
+    "kwm"
+    "title-bar-flat-dark"
+    "title-bar-flat-light"
+    "title-bar-raised-dark"
+    "title-bar-raised-light"
+  ];
 in
 {
   inherit screenshot;
@@ -95,7 +109,9 @@ in
         meta.description = "Screenshots of kwm";
       }
       ''
-        kwm-screenshot "$out"
+        for preset in ${lib.concatStringsSep " " presets}; do
+          kwm-screenshot "$out" "$preset"
+        done
       '';
 
   # `update-screenshots` in the development shell. It builds the screenshots

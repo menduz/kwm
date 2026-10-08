@@ -3,3 +3,6 @@ zig-out/
 zig-pkg/
 /config.zon
 result
+
+# Local screenshots of a pressed close button (not made by the screenshots).
+screenshots/*pressed*.png

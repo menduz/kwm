@@ -64,6 +64,11 @@ pub const Config = struct {
     default_attach_mode: meta.enum_struct(kwm.Layout.Type, kwm.WindowAttachMode),
 
     default_window_decoration: kwm.WindowDecoration,
+    /// A title bar on each window with server side decorations that is not
+    /// maximized or fullscreen, as the caption of win-classic-theme: the title
+    /// and a close button. kwm always tries server side decorations. Refer to
+    /// src/kwm/decoration.zig.
+    title_bar: bool = true,
 
     border: struct {
         width: i32,
@@ -89,6 +94,18 @@ pub const Config = struct {
         /// kwm draws only the outline around it. Refer to `csd_margin`.
         style: enum { flat, raised } = .flat,
         raised: struct {
+            /// The outline of 1 pixel outside the edges, with a border of 3
+            /// pixels or more. A title bar shows the focused window, thus the
+            /// outline is not necessary.
+            /// .all: each window has the outline.
+            /// .sandboxes: only a window of a sandbox (not the host), in the
+            /// color of the sandbox.
+            /// .csd: only a window with client side decorations. kwm draws
+            /// no edges around it (refer to `csd_margin`), thus the outline
+            /// shows its focus. A window with server side decorations has a
+            /// title bar.
+            /// .none: no outline. The face takes its pixel.
+            outline: enum { all, sandboxes, csd, none } = .all,
             focus: Bevel = .{ .outline = 0x000080ff },
             unfocus: Bevel = .{},
             /// Read the colors from the `@define-color` lines of gtk-3.0/gtk.css

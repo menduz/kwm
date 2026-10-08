@@ -36,7 +36,29 @@
     "root": {
       "inputs": {
         "nixpkgs": "nixpkgs",
-        "river": "river"
+        "river": "river",
+        "win-classic-theme": "win-classic-theme"
+      }
+    },
+    "win-classic-theme": {
+      "inputs": {
+        "nixpkgs": [
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1791234057,
+        "narHash": "sha256-Yc65DpPIXpMAyPbHjRW1albU9Ed7u8h84+bKbdNdIy4=",
+        "ref": "main",
+        "rev": "7e8a9f52b23824050f64cf842747c60b0279306b",
+        "revCount": 68,
+        "type": "git",
+        "url": "https://github.com/menduz/win-classic-theme.git"
+      },
+      "original": {
+        "ref": "main",
+        "type": "git",
+        "url": "https://github.com/menduz/win-classic-theme.git"
       }
     }
   },

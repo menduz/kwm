@@ -1,12 +1,36 @@
-# Takes the screenshot of kwm: river with the headless backend of wlroots,
-# kwm with config.def.zon, three terminals and three tray items. Run it with
-# the environment of `kwm-screenshot` in screenshots.nix.
+# Takes a screenshot of kwm: river with the headless backend of wlroots, kwm
+# with config.def.zon, three terminals and three tray items. Run it with the
+# environment of `kwm-screenshot` in screenshots.nix.
 #
-# Usage: kwm-screenshot <output directory>
+# Usage: kwm-screenshot <output directory> [<preset>]
+#
+# The presets, each one in <preset>.png:
+#
+#   kwm                     config.def.zon (the default)
+#   title-bar-flat-<theme>  the flat border of 1 pixel: an outline, without
+#                           the 3D edges
+#   title-bar-raised-<theme>
+#                           the raised border of 3 pixels, without the outline
+#
+# <theme> is dark (win-classic-dark) or light (win-classic-standard, the
+# Windows Standard scheme). A title bar preset also has a floating terminal.
 set -euo pipefail
 
-out=${1:?usage: kwm-screenshot <output directory>}
+out=${1:?usage: kwm-screenshot <output directory> [<preset>]}
+preset=${2:-kwm}
 mkdir -p "$out"
+
+case $preset in
+  kwm) border=default theme= ;;
+  title-bar-flat-dark) border=flat theme=win-classic-dark ;;
+  title-bar-flat-light) border=flat theme=win-classic-standard ;;
+  title-bar-raised-dark) border=raised theme=win-classic-dark ;;
+  title-bar-raised-light) border=raised theme=win-classic-standard ;;
+  *)
+    echo "kwm-screenshot: unknown preset: $preset" >&2
+    exit 1
+    ;;
+esac
 
 work=$(mktemp -d)
 pids=()
@@ -31,6 +55,36 @@ export XDG_CONFIG_HOME=$work/config
 export XDG_RUNTIME_DIR=$work/run
 mkdir -p "$HOME" "$XDG_CONFIG_HOME" "$XDG_RUNTIME_DIR"
 chmod 700 "$XDG_RUNTIME_DIR"
+
+# The border of the preset: lines of config.def.zon with other values.
+if [ "$border" != default ]; then
+  mkdir -p "$XDG_CONFIG_HOME/kwm"
+  python3 - "$DEFAULT_CONFIG" "$border" >"$XDG_CONFIG_HOME/kwm/config.zon" <<'PY'
+import sys
+
+config = open(sys.argv[1]).read()
+changes = {
+    "flat": [("        .width = 2,\n", "        .width = 1,\n")],
+    "raised": [
+        ("        .width = 2,\n", "        .width = 3,\n"),
+        ("        .style = .flat,\n", "        .style = .raised,\n"),
+        ("            .outline = .all,\n", "            .outline = .none,\n"),
+    ],
+}[sys.argv[2]]
+for old, new in changes:
+    if config.count(old) != 1:
+        sys.exit(f"kwm-screenshot: config.def.zon has not one line {old.strip()!r}")
+    config = config.replace(old, new)
+print(config, end="")
+PY
+fi
+
+# The GTK theme of the title bars and of the raised border.
+if [ -n "$theme" ]; then
+  export GTK_THEME=$theme
+  export XDG_DATA_DIRS=$XDG_DATA_DIRS:$THEME_DATA_DIRS
+fi
+
 export TZ=UTC
 export LANG=C.UTF-8
 
@@ -90,7 +144,7 @@ pad=6x6
 blink=no
 FOOT
 terminal() {
-  foot --config="$work/foot.ini" sh -c "$1; exec sleep infinity" &
+  foot --config="$work/foot.ini" "${@:2}" sh -c "$1; exec sleep infinity" &
   pids+=("$!")
   sleep 1
 }
@@ -98,8 +152,13 @@ terminal 'kwm -h'
 terminal 'printf "%s\n" "tags 1-9" "layouts: tile, grid, monocle, deck," "  scroller, centered master, float" "widgets: memory, clock, cpu, battery," "  disk, scripts, tray"'
 terminal 'printf "%s\n" "Super+Return  terminal" "Super+Space   launcher" "Super+1..9    tags" "Super+J/K     focus" "Super+Q       close"'
 
+# A floating terminal: config.def.zon makes a window with this title floating.
+if [ "$preset" != kwm ]; then
+  terminal 'printf "%s\n" "a floating window" "with a title bar"' --title=FloatingTerminal --window-size-chars=40x6
+fi
+
 # The widgets update each second, and the tray reads the icons.
 sleep 3
 
-grim "$out/kwm.png"
-echo "kwm-screenshot: wrote $out/kwm.png"
+grim "$out/$preset.png"
+echo "kwm-screenshot: wrote $out/$preset.png"

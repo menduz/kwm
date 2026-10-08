@@ -8,6 +8,11 @@
       url = "git+https://codeberg.org/river/river.git?ref=main";
       flake = false;
     };
+    # The GTK themes of the screenshots of the title bar (dark and light).
+    win-classic-theme = {
+      url = "git+https://github.com/menduz/win-classic-theme.git?ref=main";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
   outputs =
@@ -15,6 +20,7 @@
       self,
       nixpkgs,
       river,
+      win-classic-theme,
     }:
     let
       inherit (nixpkgs) lib;
@@ -31,9 +37,15 @@
             version = "0-unstable-${self.lastModifiedDate or "dirty"}";
           };
           river-main = pkgs.callPackage ./nix/river.nix { src = river; };
+          themes = win-classic-theme.packages.${pkgs.stdenv.hostPlatform.system};
           shots = pkgs.callPackage ./nix/screenshots.nix {
             inherit kwm;
             river = river-main;
+            # The light theme is the Windows Standard scheme.
+            themes = [
+              themes.dark
+              themes.windows-standard
+            ];
           };
           tests = pkgs.callPackage ./nix/tests.nix {
             inherit kwm;
@@ -63,6 +75,7 @@
           test-maximize = b.tests.maximize;
           test-focus = b.tests.focus;
           test-bar = b.tests.bar;
+          test-title-bar = b.tests.title-bar;
         }
       );
 

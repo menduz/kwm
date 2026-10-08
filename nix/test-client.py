@@ -1,7 +1,7 @@
 # A Wayland client for the tests of kwm. It shows one xdg-shell window and
 # writes the last state that the compositor gives it to a file:
 #
-#     maximized=1 activated=1 keyboard=1 can_maximize=1 tiled=1 width=1280 height=696
+#     maximized=1 activated=1 keyboard=1 can_maximize=1 tiled=1 decoration=server width=1280 height=696
 #
 # activated is the xdg_toplevel state: river gives it to the window that river
 # knows as focused. keyboard is 1 between wl_keyboard.enter and
@@ -10,13 +10,16 @@
 # can_maximize is the maximize capability of xdg_toplevel.wm_capabilities
 # (without the event, a window has all capabilities). tiled is 1 when the
 # window has a tiled state: kwm gives it to a window that is not floating.
+# decoration is the mode of xdg-decoration (none without --decoration).
 #
-# Usage: test-client.py <name> <state file> [--maximize] [--fixed] [--drag]
+# Usage: test-client.py <name> <state file> [--maximize] [--fixed] [--drag] [--decoration]
 #
 #   --maximize  ask to be maximized before the first commit. Chromium does this
 #               when the last active window was maximized.
 #   --fixed     set the same minimum and maximum size, 300x200. kwm makes such
 #               a window floating.
+#   --decoration  use xdg-decoration, and ask for client side decorations, as
+#               Chromium does.
 #   --drag      start a drag at a press of the pointer button on the window,
 #               and stop when the drag ends. Brave does this when a tab goes
 #               into another window: the window of the tab closes.
@@ -31,6 +34,10 @@ import sys
 
 from pywayland.client import Display
 from pywayland.protocol.wayland import WlCompositor, WlDataDeviceManager, WlSeat, WlShm
+from pywayland.protocol.xdg_decoration_unstable_v1 import (
+    ZxdgDecorationManagerV1,
+    ZxdgToplevelDecorationV1,
+)
 from pywayland.protocol.xdg_shell import XdgToplevel, XdgWmBase
 
 name, state_file = sys.argv[1], sys.argv[2]
@@ -50,6 +57,8 @@ def on_global(registry, id_, interface, version):
     elif interface == "xdg_wm_base":
         # wm_capabilities comes with version 5.
         globals_["wm_base"] = registry.bind(id_, XdgWmBase, min(version, 5))
+    elif interface == "zxdg_decoration_manager_v1":
+        globals_["decoration_manager"] = registry.bind(id_, ZxdgDecorationManagerV1, 1)
     elif interface == "wl_data_device_manager":
         globals_["data_device_manager"] = registry.bind(id_, WlDataDeviceManager, 3)
     elif interface == "wl_seat" and "seat" not in globals_:
@@ -112,9 +121,25 @@ if "--fixed" in flags:
     toplevel.set_max_size(300, 200)
 if "--maximize" in flags:
     toplevel.set_maximized()
+if "--decoration" in flags:
+    toplevel_decoration = globals_["decoration_manager"].get_toplevel_decoration(toplevel)
+    toplevel_decoration.set_mode(ZxdgToplevelDecorationV1.mode.client_side.value)
+
+    def on_decoration_configure(decoration, mode):
+        pending["decoration"] = "server" if mode == ZxdgToplevelDecorationV1.mode.server_side.value else "client"
+
+    toplevel_decoration.dispatcher["configure"] = on_decoration_configure
 
 # The state of the last toplevel configure. xdg_surface.configure applies it.
-pending = {"width": 0, "height": 0, "maximized": False, "activated": False, "tiled": False, "can_maximize": True}
+pending = {
+    "width": 0,
+    "height": 0,
+    "maximized": False,
+    "activated": False,
+    "tiled": False,
+    "can_maximize": True,
+    "decoration": "none",
+}
 # The state that the window has now.
 current = {
     "width": 0,
@@ -124,6 +149,7 @@ current = {
     "keyboard": False,
     "tiled": False,
     "can_maximize": True,
+    "decoration": "none",
 }
 buffers = []
 
@@ -138,7 +164,8 @@ def write_state():
         f.write(
             f"maximized={int(current['maximized'])} activated={int(current['activated'])} "
             f"keyboard={int(current['keyboard'])} can_maximize={int(current['can_maximize'])} "
-            f"tiled={int(current['tiled'])} width={current['width']} height={current['height']}\n"
+            f"tiled={int(current['tiled'])} decoration={current['decoration']} "
+            f"width={current['width']} height={current['height']}\n"
         )
     os.rename(tmp, state_file)
 
@@ -171,7 +198,8 @@ def make_buffer(width, height):
     fd = os.memfd_create("kwm-test-client")
     os.ftruncate(fd, size)
     data = mmap.mmap(fd, size)
-    data.write(b"\x80\x80\x80\xff" * (width * height))
+    # #406080: no color of a title bar of kwm (refer to test-title-bar.sh).
+    data.write(b"\x80\x60\x40\xff" * (width * height))
     pool = globals_["shm"].create_pool(fd, size)
     buffer = pool.create_buffer(0, width, height, stride, WlShm.format.argb8888.value)
     pool.destroy()

@@ -105,13 +105,15 @@ let
   maximize = mkTest "maximize";
   focus = mkTest "focus";
   bar = mkTest "bar";
+  title-bar = mkTest "title-bar";
 in
 {
-  inherit maximize focus bar;
+  inherit maximize focus bar title-bar;
 
   checks = {
     maximize = mkCheck "maximize" "The maximized state of the windows of kwm";
     focus = mkCheck "focus" "The keyboard focus of the windows of kwm";
     bar = mkCheck "bar" "A change of the status of the bar needs no manage sequence";
+    title-bar = mkCheck "title-bar" "The title bar of a window with server side decorations";
   };
 }

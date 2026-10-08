@@ -65,7 +65,11 @@ drawn: ?struct {
     width: i32,
     height: i32,
     border: i32,
+    top: i32,
+    outline: bool,
     bevel: config.Bevel,
+    /// The color of a flat border (`render_flat`). null: the raised border.
+    flat: ?u32,
 } = null,
 
 
@@ -107,39 +111,81 @@ pub fn deinit(self: *Self) void {
 }
 
 
-/// Draw the border around a window of `width` x `height`. `border` is the
-/// width of the border.
-pub fn render(self: *Self, width: i32, height: i32, border: i32, bevel: config.Bevel) void {
-    if (self.drawn) |d| {
-        if (d.width == width and d.height == height and d.border == border
-            and std.meta.eql(d.bevel, bevel)) return;
-    }
-    self.drawn = .{ .width = width, .height = height, .border = border, .bevel = bevel };
-
-    log.debug("<{*}> rendering {}x{}, border {}", .{ self, width, height, border });
-
-    // The size of the decoration, with the border.
+/// The decoration for a window of `width` x `height`, with the border and the
+/// title bar (`top`). Returns the size of the decoration, and its buffer: the
+/// caller destroys it after the commit.
+fn begin(self: *Self, width: i32, height: i32, border: i32, top: i32) ?struct { i32, i32, *wl.Buffer } {
     const w = width + 2 * border;
-    const h = height + 2 * border;
+    const h = height + top + 2 * border;
 
-    self.rwm_decoration.setOffset(-border, -border);
+    self.rwm_decoration.setOffset(-border, -border - top);
     self.rwm_decoration.syncNextCommit();
 
     // The decoration itself is transparent. Only the strips have a color, so
     // a transparent window does not show a color below it.
     const buffer = ctx.wp_single_pixel_buffer_manager.createU32RgbaBuffer(0, 0, 0, 0) catch |err| {
         log.err("<{*}> create buffer failed: {}", .{ self, err });
-        return;
+        return null;
     };
-    defer buffer.destroy();
 
     self.wl_surface.attach(buffer, 0, 0);
     self.wl_surface.damage(0, 0, w, h);
     self.wp_viewport.setDestination(w, h);
+    return .{ w, h, buffer };
+}
+
+
+/// Draw the flat border around a window of `width` x `height` and its title
+/// bar (`top`): one band of `color`, `border` pixels wide. river draws the
+/// flat border around the window only, thus kwm draws it for a window with a
+/// title bar.
+pub fn render_flat(self: *Self, width: i32, height: i32, border: i32, top: i32, color: u32) void {
+    if (self.drawn) |d| {
+        if (d.flat == color and d.width == width and d.height == height and d.border == border
+            and d.top == top) return;
+    }
+    self.drawn = .{ .width = width, .height = height, .border = border, .top = top, .outline = false, .bevel = .{}, .flat = color };
+
+    log.debug("<{*}> rendering flat {}x{}, border {}, top {}", .{ self, width, height, border, top });
+
+    const w, const h, const buffer = self.begin(width, height, border, top) orelse return;
+    defer buffer.destroy();
+
+    for (&self.strips, 0..) |*strip, i| {
+        const kind: Strip = @enumFromInt(i);
+        switch (kind) {
+            .outline_top => strip.render(0, 0, w, border, color),
+            .outline_bottom => strip.render(0, h - border, w, border, color),
+            .outline_left => strip.render(0, border, border, h - 2 * border, color),
+            .outline_right => strip.render(w - border, border, border, h - 2 * border, color),
+            // A transparent pixel keeps the strip, without a visible line.
+            else => strip.render(0, 0, 1, 1, 0),
+        }
+    }
+
+    self.wl_surface.commit();
+}
+
+
+/// Draw the border around a window of `width` x `height`. `border` is the
+/// width of the border. `top` is the height of the title bar above the
+/// window: the border goes around it too. Without `outline`, the face takes
+/// the pixel of the outline.
+pub fn render(self: *Self, width: i32, height: i32, border: i32, top: i32, outline: bool, bevel: config.Bevel) void {
+    if (self.drawn) |d| {
+        if (d.flat == null and d.width == width and d.height == height and d.border == border
+            and d.top == top and d.outline == outline and std.meta.eql(d.bevel, bevel)) return;
+    }
+    self.drawn = .{ .width = width, .height = height, .border = border, .top = top, .outline = outline, .bevel = bevel, .flat = null };
+
+    log.debug("<{*}> rendering {}x{}, border {}, top {}", .{ self, width, height, border, top });
+
+    const w, const h, const buffer = self.begin(width, height, border, top) orelse return;
+    defer buffer.destroy();
 
     // The outline uses the outside pixel. The edges are inside the outline,
     // and the face fills the rest to the window.
-    const o: i32 = if (border >= 3) 1 else 0;
+    const o: i32 = if (border >= 3 and outline) 1 else 0;
     const ew = w - 2 * o;
     const eh = h - 2 * o;
     const e = o + 2;

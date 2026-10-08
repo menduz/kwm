@@ -13,20 +13,26 @@ river-window-management-v1 protocol.
 # Screenshots
 
 ![The default configuration: the bar with the tags, the layout, the title,
-the widgets and the tray, and three terminals in the tile layout](./screenshots/kwm.png)
+the widgets and the tray, and three terminals with title bars in the tile
+layout](./screenshots/kwm.png)
 
-`screenshots/kwm.png` shows `config.def.zon`. The build makes it in the Nix
+kwm is made for [win-classic-theme], a GTK theme of the classic Windows
+look. kwm reads the colors of the current GTK theme (`GTK_THEME`) for the
+title bars and the raised border, thus they look like the windows of the
+theme. The screenshots below use its dark scheme and its light scheme
+(Windows Standard), with three terminals and a floating terminal.
+
+| | Dark | Light |
+| --- | --- | --- |
+| Flat border (an outline) | ![The dark scheme with the flat border](./screenshots/title-bar-flat-dark.png) | ![The light scheme with the flat border](./screenshots/title-bar-flat-light.png) |
+| Raised border, without outline | ![The dark scheme with the raised border](./screenshots/title-bar-raised-dark.png) | ![The light scheme with the raised border](./screenshots/title-bar-raised-light.png) |
+
+`screenshots/kwm.png` shows `config.def.zon`, without a GTK theme. The
+others are presets of `nix/screenshot.sh`: each one changes the border of
+`config.def.zon` and sets `GTK_THEME`. The build makes them in the Nix
 sandbox: river runs with the headless backend of wlroots, and the clock and
 the meters have fixed values. Thus each build gives the same pixels. To make
-it again after a change, run `update-screenshots` in `nix develop`.
-
-![tile](./images/tile.png)
-
-![grid](./images/grid.png)
-
-![monocle](./images/monocle.png)
-
-![scroller](./images/scroller.png)
+them again after a change, run `update-screenshots` in `nix develop`.
 
 ## Features
 
@@ -43,6 +49,14 @@ custom)
 
 - **Window States:** swallow, maximize, fullscreen, fake fullscreen, floating,
 sticky
+
+- **Title Bars:** kwm always asks for server side decorations. A window with
+  them gets a title bar with a close button, as the caption of
+  [win-classic-theme], in the colors of the GTK theme of the window. A
+  client without xdg-decoration draws its own decorations
+
+- **Borders:** a flat border, or the raised border of Windows with the colors
+  of the GTK theme. Both go around the title bar
 
 - **Autostart:** run commands on startup
 
@@ -205,4 +219,5 @@ GPL-3.0-compatible.
 [swallow patch]: https://codeberg.org/dwl/dwl-patches/src/branch/main/patches/swallow/swallow.patch
 [mvzr]: https://github.com/mnemnion/mvzr
 [River's logo]: https://codeberg.org/river/river/src/branch/main/logo/logo.svg
+[win-classic-theme]: https://github.com/menduz/win-classic-theme
 [kwim]: https://github.com/kewuaa/kwim

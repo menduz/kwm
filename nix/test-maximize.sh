@@ -89,7 +89,7 @@ close a
 close c
 expect_state d " can_maximize=1 tiled=0 " "a floating window alone can maximize itself"
 kill -USR1 "${client[d]}"
-expect_state d "^maximized=1 .* tiled=1 width=$full_width height=$full_height$" \
+expect_state d "^maximized=1 .* tiled=1 .*width=$full_width height=$full_height$" \
   "a maximized floating window stops floating and fills the output"
 
 open f
@@ -98,7 +98,7 @@ close f
 close d
 
 open e --fixed --maximize
-expect_state e "^maximized=1 .* tiled=1 width=$full_width height=$full_height$" \
+expect_state e "^maximized=1 .* tiled=1 .*width=$full_width height=$full_height$" \
   "a floating window alone that asks to be maximized at start stops floating and fills the output"
 
 if [ "$failed" -ne 0 ]; then

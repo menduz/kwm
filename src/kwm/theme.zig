@@ -94,6 +94,44 @@ pub fn bevel_of(name: ?[]const u8, focused: bool) config.Bevel {
 }
 
 
+/// The colors of the title bar of win-classic-theme. Refer to decoration.zig
+/// and title_bar.zig.
+pub const TitleColors = struct {
+    /// The caption: a gradient from `start` at the left to `end` at the
+    /// right.
+    start: u32,
+    end: u32,
+    text: u32,
+    /// The glyph of the close button (ControlText).
+    button_text: u32,
+};
+
+
+/// The title bar colors of the GTK theme `name`. null: the current GTK theme.
+/// Without a theme, the colors of the Windows Standard scheme.
+pub fn title_colors_of(name: ?[]const u8, focused: bool) TitleColors {
+    const map = colors_of(name);
+    const button_text = map.get("button_fg_color") orelse map.get("fg_color") orelse 0x000000ff;
+    if (focused) {
+        const solid = map.get("wm_active_title") orelse 0x000080ff;
+        return .{
+            .start = map.get("active_title_color") orelse solid,
+            .end = map.get("active_title_color1") orelse if (map.contains("wm_active_title")) solid else 0x1084d0ff,
+            .text = map.get("wm_active_title_text") orelse 0xffffffff,
+            .button_text = button_text,
+        };
+    }
+    // The theme paints the caption of an inactive window in one color.
+    const solid = map.get("wm_inactive_title") orelse 0x808080ff;
+    return .{
+        .start = solid,
+        .end = solid,
+        .text = map.get("wm_inactive_title_text") orelse 0xc0c0c0ff,
+        .button_text = button_text,
+    };
+}
+
+
 /// The colors of the GTK theme `name`. kwm reads a theme other than the
 /// current theme one time, and keeps its colors.
 fn colors_of(name: ?[]const u8) *const Colors {

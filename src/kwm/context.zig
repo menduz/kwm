@@ -1206,8 +1206,9 @@ fn prepare_render_windows(self: *Self) void {
         } else {
             window.border_focused = !self.focus_exclusive() and window == focused;
             window.set_border(
-                // kwm draws the raised border itself. Refer to raised_border.zig.
-                if (window.fullscreen == .output or self.cfg.border.style == .raised) 0
+                // kwm draws the raised border itself, and the flat border of a
+                // window with a title bar. Refer to raised_border.zig.
+                if (window.fullscreen == .output or !window.uses_river_border()) 0
                 else self.cfg.border.width,
                 window.border_color(
                     if (window.border_focused)
