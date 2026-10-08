@@ -178,6 +178,7 @@ test {
     _ = @import("kwm/decoration.zig");
     _ = @import("kwm/floating.zig");
     _ = @import("kwm/maximize.zig");
+    _ = @import("kwm/portal_setting.zig");
     _ = @import("kwm/refocus.zig");
     _ = @import("kwm/sandbox.zig");
     _ = @import("kwm/themerc.zig");

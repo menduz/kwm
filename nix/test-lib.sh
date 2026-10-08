@@ -43,6 +43,12 @@ pids+=("$(cat "$work/bus-pid")")
 DBUS_SESSION_BUS_ADDRESS=$(cat "$work/bus-address")
 export DBUS_SESSION_BUS_ADDRESS
 
+# A test can define before_river: it runs on the session bus before kwm
+# starts, for example a service that kwm reads at its start.
+if declare -F before_river >/dev/null; then
+  before_river
+fi
+
 river -no-xwayland -c "kwm -log-level debug" >"$work/river.log" 2>&1 &
 pids+=("$!")
 

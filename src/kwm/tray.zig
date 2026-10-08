@@ -309,6 +309,7 @@ pub fn deinit() void {
     for (slots.items) |slot| _ = sd.sd_bus_slot_unref(slot);
     slots.clearAndFree(ctx.gpa);
     tray_menu.close();
+    @import("settings_portal.zig").detach();
     watcher = false;
     unique_name = "";
     bus = sd.sd_bus_flush_close_unref(bus);
@@ -521,6 +522,9 @@ fn open() !void {
     try keep(slot);
 
     log.info("connected to the session bus as {s}", .{ unique_name });
+
+    // The GTK theme of the desktop shares this connection.
+    @import("settings_portal.zig").attach(b.?);
 }
 
 
