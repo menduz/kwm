@@ -487,7 +487,7 @@ fn wl_output_listener(wl_output: *wl.Output, event: wl.Output.Event, output: *Se
                 ctx.gpa.free(kv.key);
                 ctx.gpa.destroy(kv.value);
 
-                ctx.rwm.manageDirty();
+                ctx.manage_dirty(@src());
             }
 
             {

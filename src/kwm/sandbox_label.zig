@@ -156,7 +156,7 @@ pub fn pointer_enter(surface: *wl.Surface) bool {
         };
         log.debug("<{*}> pointer near, move to the {s} corner", .{ label, @tagName(label.corner) });
         // The next render sequence moves the label.
-        ctx.rwm.manageDirty();
+        ctx.manage_dirty(@src());
         return true;
     }
     return false;

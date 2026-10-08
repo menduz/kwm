@@ -304,7 +304,7 @@ pub fn try_focus(self: *Self) void {
             .clear => {
                 log.debug("<{*}> clear focus, then focus {*} in the next manage sequence", .{ self, window });
                 self.rwm_seat.clearFocus();
-                ctx.rwm.manageDirty();
+                ctx.manage_dirty(@src());
             },
         }
     } else {

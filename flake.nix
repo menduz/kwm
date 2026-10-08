@@ -62,6 +62,7 @@
           inherit (b.shots) screenshots screenshot;
           test-maximize = b.tests.maximize;
           test-focus = b.tests.focus;
+          test-bar = b.tests.bar;
         }
       );
 

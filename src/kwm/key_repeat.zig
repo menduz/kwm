@@ -68,7 +68,7 @@ pub fn repeat(self: *Self, count: u64) void {
         self.xkb_binding.?.seat.append_action(self.action);
     }
 
-    ctx.rwm.manageDirty();
+    ctx.manage_dirty(@src());
 }
 
 

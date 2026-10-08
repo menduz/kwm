@@ -798,6 +798,11 @@ fn set_floating(self: *Self, floating: bool) void {
     self.floating = floating;
     self.layer_managed = false;
     self.floating_changed = true;
+    // The layout gives the geometry of a tiled window. A window that kwm made
+    // floating before its first dimensions event (auto-floating) has no
+    // geometry yet: without this, that event would place it as a floating
+    // window.
+    if (!floating) self.geometry_undefined = false;
 
     log.debug("<{*}> set floating: {}", .{ self, self.floating });
 

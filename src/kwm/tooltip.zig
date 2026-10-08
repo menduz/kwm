@@ -274,6 +274,12 @@ pub fn damage() void {
 }
 
 
+/// True when the tooltip waits for a render sequence.
+pub fn needs_render() bool {
+    return dirty;
+}
+
+
 /// The bar goes away. Forget it.
 pub fn forget(bar: *Bar) void {
     if (target) |t| if (t.bar == bar) close();
@@ -282,7 +288,7 @@ pub fn forget(bar: *Bar) void {
 
 fn request_render() void {
     dirty = true;
-    ctx.rwm.manageDirty();
+    ctx.manage_dirty(@src());
 }
 
 

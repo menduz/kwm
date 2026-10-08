@@ -276,17 +276,25 @@ fn blink_tick(_: *Context) void {
 }
 
 
-fn damage_bars() void {
+/// The status changed. The bars draw it at once. A manage and a render
+/// sequence come only when a bar or the tooltip needs one. Refer to
+/// bar_update.zig.
+pub fn damage_bars() void {
     if (comptime build_options.bar_enabled) {
-        var shown: usize = 0;
+        var render_sequence = false;
         var it = ctx.outputs.safeIterator(.forward);
         while (it.next()) |output| {
             output.bar.damage(.status);
-            if (!output.bar.hidden) shown += 1;
+            if (output.bar.render_status()) render_sequence = true;
         }
-        if (shown > 0) ctx.rwm.manageDirty();
 
-        @import("tooltip.zig").damage();
+        // The tooltip places its own surface, thus it needs a render
+        // sequence.
+        const tooltip = @import("tooltip.zig");
+        tooltip.damage();
+        if (tooltip.needs_render()) render_sequence = true;
+
+        if (render_sequence) ctx.manage_dirty(@src());
     }
 }
 

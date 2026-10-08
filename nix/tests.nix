@@ -16,6 +16,7 @@
   gnugrep,
   wtype,
   wlrctl,
+  grim,
   wayland-scanner,
   pkg-config,
   wlr-protocols,
@@ -24,7 +25,10 @@
   dejavu_fonts,
 }:
 let
-  python = python3.withPackages (ps: [ ps.pywayland ]);
+  python = python3.withPackages (ps: [
+    ps.pywayland
+    ps.pillow
+  ]);
 
   # The pywayland modules of the virtual input protocols, for test-input.py.
   # wayland.xml is necessary for the types of the core protocol.
@@ -63,6 +67,7 @@ let
         gnugrep
         wtype
         wlrctl
+        grim
       ];
       text = ''
         # The fonts of the bar in config.def.zon.
@@ -78,6 +83,7 @@ let
         export TEST_CLIENT=${./test-client.py}
         export TEST_LIB=${./test-lib.sh}
         export TEST_INPUT=${./test-input.py}
+        export TEST_DEFAULT_CONFIG=${../config.def.zon}
         export PYTHONPATH=${protocols}
         exec bash ${./. + "/test-${name}.sh"} "$@"
       '';
@@ -98,12 +104,14 @@ let
 
   maximize = mkTest "maximize";
   focus = mkTest "focus";
+  bar = mkTest "bar";
 in
 {
-  inherit maximize focus;
+  inherit maximize focus bar;
 
   checks = {
     maximize = mkCheck "maximize" "The maximized state of the windows of kwm";
     focus = mkCheck "focus" "The keyboard focus of the windows of kwm";
+    bar = mkCheck "bar" "A change of the status of the bar needs no manage sequence";
   };
 }

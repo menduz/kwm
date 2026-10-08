@@ -295,6 +295,14 @@ pub inline fn get() *Self {
 }
 
 
+/// Ask river for a manage sequence. The log names the caller: each manage
+/// sequence arranges all windows, thus a caller that asks often costs.
+pub fn manage_dirty(self: *Self, src: std.builtin.SourceLocation) void {
+    log.debug("manage dirty: {s}:{}", .{ src.file, src.line });
+    self.rwm.manageDirty();
+}
+
+
 pub fn run_later(self: *Self, delay: Io.Duration, handler: *const fn(*Self) void) void {
     log.debug("run {*} {}ms later", .{ handler, delay.toMilliseconds() });
 
@@ -473,17 +481,7 @@ pub fn update_bar_status(self: *Self) void {
                     dest_buf[nbytes] = 0;
                 }
 
-                var show_bar_num: u8 = 0;
-                var it = self.outputs.safeIterator(.forward);
-                while (it.next()) |output| {
-                    output.bar.damage(.status);
-
-                    if (!output.bar.hidden) {
-                        show_bar_num += 1;
-                    }
-                }
-
-                if (show_bar_num > 0) self.rwm.manageDirty();
+                @import("widgets.zig").damage_bars();
             } else {
                 self.stop_listening_status();
             }

@@ -25,6 +25,13 @@ export XDG_RUNTIME_DIR=$work/run
 mkdir -p "$HOME" "$XDG_CONFIG_HOME" "$XDG_RUNTIME_DIR"
 chmod 700 "$XDG_RUNTIME_DIR"
 
+# A test can give a configuration of kwm in TEST_KWM_CONFIG. Else kwm reads
+# config.def.zon.
+if [ -n "${TEST_KWM_CONFIG:-}" ]; then
+  mkdir -p "$XDG_CONFIG_HOME/kwm"
+  printf '%s\n' "$TEST_KWM_CONFIG" >"$XDG_CONFIG_HOME/kwm/config.zon"
+fi
+
 export WLR_BACKENDS=headless
 export WLR_RENDERER=pixman
 export WLR_HEADLESS_OUTPUTS=1

@@ -19,6 +19,7 @@ const utils = @import("utils.zig");
 const types = @import("types.zig");
 const render_ = @import("render.zig");
 const sandbox = @import("sandbox.zig");
+const bar_update = @import("bar_update.zig");
 const binding = @import("binding.zig");
 const Context = @import("context.zig");
 const Seat = @import("seat.zig");
@@ -312,6 +313,27 @@ pub fn damage(self: *Self, @"type": enum { all, tags, dynamic, layout, mode, tit
             self.dynamic_component_damaged = true;
         },
         else => self.dynamic_component_damaged = true,
+    }
+}
+
+
+/// Draw a change of the status at once, outside of a render sequence.
+/// Returns true when the bar needs a render sequence. Refer to
+/// bar_update.zig.
+pub fn render_status(self: *Self) bool {
+    switch (bar_update.when(.{
+        .hidden = self.hidden,
+        .static = self.static_component_damaged,
+        .dynamic = self.dynamic_component_damaged,
+        .background = self.background_damaged,
+    })) {
+        .nothing => return false,
+        .render_sequence => return true,
+        .now => {
+            self.dynamic_component_damaged = false;
+            self.render_dynamic_component();
+            return false;
+        },
     }
 }
 

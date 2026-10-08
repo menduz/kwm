@@ -65,7 +65,7 @@ pub fn set_gtk_theme(name: []const u8) void {
     gtk_theme = copy;
 
     load(&colors, name);
-    ctx.rwm.manageDirty();
+    ctx.manage_dirty(@src());
 }
 
 

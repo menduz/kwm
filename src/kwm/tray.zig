@@ -1070,6 +1070,6 @@ fn changed() void {
         output.bar.damage(.dynamic);
         if (!output.bar.hidden) shown = true;
     }
-    if (shown) ctx.rwm.manageDirty();
+    if (shown) ctx.manage_dirty(@src());
     @import("tooltip.zig").damage();
 }
